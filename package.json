@@ -1,0 +1,24 @@
+{
+  "name": "xcpc-baoxiao",
+  "private": true,
+  "version": "1.0.0",
+  "description": "XCPC 报销材料整理工具（东南大学）—— Vue 3 + Vite",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@tesseract.js-data/chi_sim": "1.0.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
+    "tesseract.js": "5.1.1",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.7"
+  }
+}

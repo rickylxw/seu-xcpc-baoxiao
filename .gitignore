@@ -1,0 +1,8 @@
+node_modules
+dist
+.DS_Store
+*.local
+tmp-real
+tmp-out
+1 2026*.pdf
+2 2026*.doc
