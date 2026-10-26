@@ -63,6 +63,42 @@ function parseResultJSON(content) {
 }
 
 /**
+ * 规范化图片：解码后重编码为标准 JPEG（最长边 ≤ 1600）。
+ * 服务端 llama.cpp 只认标准 JPEG/PNG/WebP 等位图——扫描件 PDF 抽出的内嵌图、
+ * HEIC 照片等会 400（failed to decode buffer），统一经 canvas 重编码可保证可解码；
+ * 同时缩小超大图，明显加快纯 CPU 服务端的图片编码。
+ * @returns {string|null} 纯 base64 JPEG；null = 原样发送（已是标准小图）
+ */
+async function normalizeImage(file) {
+  if (typeof document === 'undefined') return null // 非浏览器环境（Node 测试）原样发送
+  const stdMime = /^image\/(png|jpeg|webp|gif|bmp)$/i.test(file.type || '')
+  const small = (file.size || 0) < 1.2 * 1024 * 1024
+  if (stdMime && small) return null // 标准小图直接发原字节
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () =>
+        reject(new Error('浏览器无法解码该图片（可能为 HEIC/扫描件内嵌格式），请转为 JPG/PNG 后上传'))
+      el.src = url
+    })
+    const MAX = 1600
+    const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale))
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#fff' // 透明底转 JPEG 前铺白底
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+/**
  * 调用服务端视觉模型识别材料。
  * @returns {Promise<{ text: string, amounts: string[], members: {i:number,name:string}[] }>}
  */
@@ -74,9 +110,16 @@ export async function recognizeViaServer(file, members, cfg) {
   if (!cfg.model) throw new Error('未配置模型名')
   if (!base) throw new Error('未配置服务器地址')
 
-  const bytes = new Uint8Array(await file.arrayBuffer())
-  const b64 = toBase64(bytes)
-  const mime = file.type || (/\.pdf$/i.test(file.name) ? 'application/pdf' : 'image/png')
+  let b64, mime
+  const norm = await normalizeImage(file)
+  if (norm) {
+    b64 = norm
+    mime = 'image/jpeg'
+  } else {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    b64 = toBase64(bytes)
+    mime = file.type || (/\.pdf$/i.test(file.name) ? 'application/pdf' : 'image/png')
+  }
   const dataUrl = `data:${mime};base64,${b64}`
 
   const roster = members.map((m) => m.name).filter(Boolean).join('、')
