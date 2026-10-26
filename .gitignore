@@ -6,3 +6,6 @@ tmp-real
 tmp-out
 1 2026*.pdf
 2 2026*.doc
+*.log
+tmp-*.mjs
+tmp-*.js

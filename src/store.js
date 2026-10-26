@@ -104,7 +104,8 @@ watch(
   { deep: true },
 )
 // 关闭/刷新页面前立即落盘，避免防抖窗口内的最后一批输入随刷新丢失
-addEventListener('beforeunload', saveNow)
+// （浏览器环境；Node 侧测试时无该全局，跳过）
+if (typeof window !== 'undefined') addEventListener('beforeunload', saveNow)
 
 /** 文件打包（材料分段与文件）：File 对象无法序列化，仅保存在内存中 */
 export const pkg = reactive({ legs: [], cross: [] })

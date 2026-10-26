@@ -8,6 +8,7 @@ import * as pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs'
 globalThis.pdfjsWorker = pdfjsWorker
 
 import { ocrImageToText } from './ocr'
+import { readZipEntries } from './unzip'
 import { recognizeViaServer } from './serverRecog'
 
 /** 提取 PDF 文本（最多前 5 页）；失败抛出异常 */
@@ -72,17 +73,30 @@ async function extractPdfPageImage(file, pageNum) {
 
 /** OFD 发票（zip + XML）文字提取：读取 Pages/Attachs 里的 TextCode 文本 */
 export async function extractOfdText(file) {
+  const items = await extractOfdTextItems(file)
+  return items.join('')
+}
+
+/** 按页面顺序提取 OFD 的 TextCode 文本片段（数组，保持原始顺序） */
+export async function extractOfdTextItems(file) {
   const entries = await readZipEntries(file)
-  let text = ''
-  for (const e of entries) {
-    if (!/\.xml$/i.test(e.name)) continue
-    if (!/Content\.xml$/i.test(e.name) && !/Attachments\//i.test(e.name)) continue
+  const pageFiles = entries
+    .filter((e) => /Doc_\d+\/Pages\/Page_\d+\/Content\.xml$/i.test(e.name))
+    .sort((a, b) => {
+      const num = (x) => Number(x.name.match(/Page_(\d+)/i)?.[1] || 0)
+      return num(a) - num(b)
+    })
+  const out = []
+  for (const e of pageFiles) {
     const xml = new TextDecoder('utf-8').decode(e.data)
     const re = /<(?:[\w-]+:)?TextCode[^>]*>([^<]*)</g
     let m
-    while ((m = re.exec(xml))) text += m[1]
+    while ((m = re.exec(xml))) {
+      const t = m[1].trim()
+      if (t) out.push(t)
+    }
   }
-  return text
+  return out
 }
 
 /** 从文本里识别金额候选（¥/￥/元，以及 金额/合计/实付 等关键词后的数字），按金额降序，最多 3 个 */

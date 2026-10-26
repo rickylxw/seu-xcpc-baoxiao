@@ -4,6 +4,7 @@ import { makeZip } from '../utils/zip'
 import { readZipEntries, commonRoot } from '../utils/unzip'
 import { membersCSVString, sanitizeName } from '../utils/misc'
 import { buildApprovalDocxBlob } from './approval'
+import { PDFDocument } from 'pdf-lib'
 import { reportText, parseTodosSection } from './report'
 
 /** 打包分组：往返交通 / 赛站住宿（参赛费材料归赛站汇总负责人统一收取，见 buildStationZipBlob） */
@@ -191,6 +192,107 @@ export function amountCheck() {
   return out
 }
 
+/**
+ * 收集全部发票/报销凭证类文件（往返交通发票、住宿发票、车票凭证），按清单顺序
+ */
+export function collectInvoiceFiles() {
+  const out = []
+  for (const g of GROUPS) {
+    const legs = pkg.legs.filter((l) => l.group === g.id)
+    legs.forEach((leg, li) => {
+      for (const fl of leg.files) {
+        if (fl.slot === 'f_invoice' || fl.slot === 'h_invoice' || fl.slot === 't_voucher') {
+          const label = `${g.name} · ${TYPE_META[leg.type] ? TYPE_META[leg.type].label : ''}${leg.label ? ' · ' + leg.label : ''}`
+          out.push({ file: fl.file, slot: fl.slot, label })
+        }
+      }
+    })
+  }
+  return out
+}
+
+/**
+ * 发票汇总 PDF：仅含发票/报销凭证，按清单顺序合并成一份文档（便捷扫描/打印）。
+ * PDF 材料原样无损合并；图片等比排版到 A4 页。返回 { blob, fileCount, pageCount }
+ */
+export async function buildInvoicesPdf() {
+  const out = await PDFDocument.create()
+  out.setTitle(`${state.meta.contest || 'XCPC'} 报销发票汇总（${state.teamName || '未命名队'}）`)
+  const items = collectInvoiceFiles()
+  let fileCount = 0
+  const skipped = []
+  for (const it of items) {
+    try {
+      if (/\.ofd$/i.test(it.file.name)) {
+        // OFD：提取文字层，重绘为文字参考页（非原件版式；原件请用开票平台下载的 PDF 打印）
+        const { extractOfdTextItems } = await import('../utils/pdfText.js')
+        const textItems = await extractOfdTextItems(it.file)
+        if (!textItems.length) throw new Error('OFD 内未提取到文字')
+        const cv = document.createElement('canvas')
+        cv.width = 1191
+        cv.height = 1684 // A4 @144dpi
+        const ctx = cv.getContext('2d')
+        ctx.fillStyle = '#fff'
+        ctx.fillRect(0, 0, cv.width, cv.height)
+        ctx.fillStyle = '#1c2b2a'
+        ctx.font = '22px SimSun, serif'
+        let ly = 80
+        for (const item of textItems) {
+          const maxW = cv.width - 160
+          let line = ''
+          for (const ch of item) {
+            if (ctx.measureText(line + ch).width > maxW) {
+              ctx.fillText(line, 80, ly)
+              ly += 34
+              line = ch
+            } else line += ch
+          }
+          ctx.fillText(line, 80, ly)
+          ly += 40
+        }
+        const blob = await new Promise((r) => cv.toBlob(r, 'image/png'))
+        const img = await out.embedPng(new Uint8Array(await blob.arrayBuffer()))
+        const page = out.addPage([595.28, 841.89])
+        page.drawImage(img, { x: 0, y: 0, width: 595.28, height: 841.89 })
+        continue
+      }
+      if (/\.pdf$/i.test(it.file.name)) {
+        const src = await PDFDocument.load(await it.file.arrayBuffer(), { ignoreEncryption: true })
+        const pages = await out.copyPages(src, src.getPageIndices())
+        pages.forEach((p) => out.addPage(p))
+      } else if (/\.(jpe?g|png)$/i.test(it.file.name)) {
+        const buf = await it.file.arrayBuffer()
+        const head = new Uint8Array(buf, 0, Math.min(12, buf.byteLength))
+        let img
+        if (head[0] === 0x89 && head[1] === 0x50) img = await out.embedPng(new Uint8Array(buf))
+        else if (head[0] === 0xff && head[1] === 0xd8) img = await out.embedJpg(new Uint8Array(buf))
+        else throw new Error('不支持的图片格式')
+        const page = out.addPage([595.28, 841.89])
+        const scale = Math.min((595.28 - 40) / img.width, (841.89 - 40) / img.height, 1)
+        page.drawImage(img, {
+          x: (595.28 - img.width * scale) / 2,
+          y: (841.89 - img.height * scale) / 2,
+          width: img.width * scale,
+          height: img.height * scale,
+        })
+      } else {
+        throw new Error('不支持的格式')
+      }
+      fileCount++
+    } catch (e) {
+      skipped.push({ name: it.file.name, reason: (e && e.message) || String(e) })
+    }
+  }
+  if (!fileCount) throw new Error('没有可合并的发票材料（支持 PDF 与图片）')
+  const bytes = await out.save()
+  return {
+    blob: new Blob([bytes], { type: 'application/pdf' }),
+    fileCount,
+    pageCount: out.getPageCount(),
+    skipped,
+  }
+}
+
 /** 发票抬头检查：已检查张数与未含「东南大学」抬头的存疑清单 */
 export function invoiceHeaderIssues() {
   const issues = []
@@ -312,6 +414,16 @@ ${memberLines}
   // 配套材料
   if (state.members.length) {
     files.push({ path: `${root}/参赛同学清单.csv`, data: enc.encode(membersCSVString(state.members)) })
+  }
+  // 发票汇总文档：全部发票/凭证按顺序合并，便于整体扫描打印
+  try {
+    const inv = await buildInvoicesPdf()
+    files.push({
+      path: `${root}/发票汇总-扫描打印版.pdf`,
+      data: new Uint8Array(await inv.blob.arrayBuffer()),
+    })
+  } catch {
+    /* 无发票文件时跳过 */
   }
   // 金额不一致说明（通用要求：支付金额合计必须与发票金额一致）
   const mismatches = amountCheck().filter((a) => a.match === false)

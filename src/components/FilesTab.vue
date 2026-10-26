@@ -12,6 +12,7 @@ import {
   amountCheck,
   buildTeamZipBlob,
   buildStationZipBlob,
+  buildInvoicesPdf,
 } from '../data/packaging'
 import { readZipEntries } from '../utils/unzip'
 import { downloadBlob, sanitizeName } from '../utils/misc'
@@ -23,6 +24,21 @@ import LegCard from './LegCard.vue'
 const mode = ref('team') // team | station
 
 // 服务器端识别配置（部署形态：同源 /v1 代理，由 server.js 转发到服务器本机的 Ollama）
+const modelList = ref([])
+const modelLoading = ref(false)
+const modelErr = ref('')
+async function loadModels() {
+  modelErr.value = ''
+  modelLoading.value = true
+  try {
+    modelList.value = await fetchModelList(state.serverOcr.baseUrl, state.serverOcr.apiKey)
+    if (!modelList.value.length) modelErr.value = '服务端未返回任何模型'
+  } catch (e) {
+    modelErr.value = '连接失败：' + ((e && e.message) || String(e)) + '（可点「部署服务器」预设恢复）'
+  } finally {
+    modelLoading.value = false
+  }
+}
 function presetDeploy() {
   state.serverOcr.baseUrl = '/v1'
   state.serverOcr.model = 'glm-ocr:latest'
@@ -93,6 +109,20 @@ function folderName() {
 const mergeOpen = ref(false)
 const mergeBusy = ref(false)
 const mergeDoc = ref(null)
+
+const invoicesBusy = ref(false)
+async function downloadInvoices() {
+  invoicesBusy.value = true
+  try {
+    const inv = await buildInvoicesPdf()
+    downloadBlob(inv.blob, `发票汇总-${state.teamName || '未命名队'}.pdf`)
+    showToast(`发票汇总 PDF 已下载（${inv.fileCount} 个文件 ${inv.pageCount} 页）`)
+  } catch (e) {
+    showToast((e && e.message) || String(e))
+  } finally {
+    invoicesBusy.value = false
+  }
+}
 
 async function openMerge() {
   const hasFiles = pkg.legs.some((l) => l.files.length)
@@ -317,9 +347,31 @@ async function packStation() {
 
           <div class="form-grid">
             <label class="field">
+              <span>接口地址（OpenAI 兼容，到 /v1 这一级；部署站同源代理填 /v1）</span>
+              <input v-model="state.serverOcr.baseUrl" placeholder="/v1 或 https://…/v1" />
+            </label>
+            <label class="field">
               <span>模型名（服务器 Ollama 中已安装的视觉模型）</span>
               <input v-model="state.serverOcr.model" placeholder="如 glm-ocr:latest" />
             </label>
+          </div>
+          <div class="btn-row" style="margin: 0 0 10px">
+            <button type="button" class="btn btn-sm" :disabled="modelLoading" @click="loadModels">
+              {{ modelLoading ? '测试连接中…' : '测试连接 / 获取模型列表' }}
+            </button>
+          </div>
+          <div v-if="modelErr" class="notice red" style="margin-bottom: 10px">{{ modelErr }}</div>
+          <div v-if="modelList.length" class="file-members" style="margin-bottom: 10px">
+            <span class="hint" style="margin: 0">连接正常，点击填入模型：</span>
+            <button
+              v-for="m in modelList"
+              :key="m"
+              type="button"
+              class="btn btn-sm"
+              @click="state.serverOcr.model = m"
+            >
+              {{ m }}
+            </button>
           </div>
           <div class="notice amber">
             启用后，图片与扫描件将发送到部署服务器识别（材料含姓名、金额等个人信息，请确认服务器可信）。文本型 PDF 与
@@ -383,9 +435,13 @@ async function packStation() {
         <div class="row-between">
           <h2>合并与打包</h2>
           <div class="btn-row" style="margin: 0">
+            <button class="btn" :disabled="invoicesBusy" @click="downloadInvoices">🧾 发票汇总 PDF（便捷扫描）</button>
             <button class="btn" :disabled="mergeBusy" @click="openMerge">🧾 合并为一个 PDF</button>
             <button class="btn btn-primary" :disabled="busy" @click="packTeam">📦 打包下载队伍 ZIP</button>
           </div>
+          <p class="hint" style="margin: 0 0 8px">
+            「发票汇总 PDF」只含发票/报销凭证（按清单顺序合并成一份文档），适合整体扫描或打印后随材料提交。
+          </p>
         </div>
         <p class="hint">
           「合并为一个 PDF」会把全部材料按清单顺序合成一份大文档：图片等比排版到 A4 页，PDF
