@@ -119,7 +119,7 @@ export async function recognizeViaServer(file, members, cfg) {
   }
 
   // OpenAI 兼容 /chat/completions
-  const resp = await doFetch(endpoint, {
+  const resp = await doFetch(endpointOf(base), {
     model: cfg.model,
     temperature: 0,
     messages: [
