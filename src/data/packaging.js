@@ -30,7 +30,7 @@ export const TYPE_META = {
     ph: '如：10.24 MU2801 南京—长春',
     slots: [
       { id: 'f_invoice', name: '机票发票', required: true, note: '抬头「东南大学」' },
-      { id: 'f_pay', name: '机票支付记录', required: true, note: '必附打印件，与发票金额核对' },
+      { id: 'f_pay', name: '机票支付记录', required: true, note: '必附打印件，与发票金额核对；购票勿勾选保险等附加服务，避免金额不一致' },
       { id: 'f_order', name: '机票订单记录', required: false, note: '需显示「经济舱」；若发票已显示姓名、起止地点和「经济舱」可免附' },
     ],
   },
@@ -38,7 +38,7 @@ export const TYPE_META = {
     label: '高铁',
     ph: '如：10.24 G1234 南京南—长春',
     slots: [
-      { id: 't_voucher', name: '车票报销凭证', required: true, note: '打印报销凭证即可，无需支付/预订记录；仅限二等座' },
+      { id: 't_voucher', name: '车票报销凭证', required: true, note: '打印报销凭证即可，无需支付/预订记录；仅限二等座；购票勿勾选保险等附加服务' },
     ],
   },
   local: {
@@ -54,7 +54,7 @@ export const TYPE_META = {
     ph: '如：10.24–10.26 ××酒店',
     slots: [
       { id: 'h_invoice', name: '住宿发票', required: true, note: '尽量含入住人、入住和离店时间' },
-      { id: 'h_pay', name: '住宿支付记录（或 POS 单）', required: true, note: '与发票金额核对；开票盖章单位需与支付对象一致' },
+      { id: 'h_pay', name: '住宿支付记录（或 POS 单）', required: true, note: '与发票金额核对；开票盖章单位需与支付对象一致（不一致可请酒店开具证明）' },
       { id: 'h_flow', name: '住宿流水记录', required: true, note: '酒店前台开具并盖章' },
     ],
   },

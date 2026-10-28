@@ -317,7 +317,7 @@ function changeType(ev) {
             v-model="leg.payCheck.note"
             class="pc-note"
             rows="2"
-            placeholder="不一致时填写情况说明（如通过平台代订，收款方为平台），打包时将生成「收付款方不一致说明.txt」一并提交"
+            placeholder="不一致时填写情况说明（如通过平台代订，收款方为平台），可直接找酒店相关人员询问并请其开具证明；打包时将生成情况说明书 docx 一并提交"
           ></textarea>
         </div>
         <div class="slot-note">识别支持：文本型 PDF、图片（OCR）、OFD 发票、扫描件 PDF（部分浏览器不支持扫描件，请转图片后上传）。中文模型已内置，离线可用。</div>
