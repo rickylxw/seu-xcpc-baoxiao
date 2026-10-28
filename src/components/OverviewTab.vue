@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { state, FLOW, showToast } from '../store'
+import { state, ui, FLOW, showToast } from '../store'
 import { copyText, fmtDateCN } from '../utils/misc'
 
 const TAX_TEXT = '单位名称：东南大学\n税务识别号：12100000466006770Q'
@@ -20,10 +20,39 @@ async function copyTax() {
 
 <template>
   <section id="tab-overview" class="tab-pane">
+    <div class="card quickstart no-print">
+      <h2>快速上手 · 先看我</h2>
+      <div class="qs-grid">
+        <div class="qs-col">
+          <div class="qs-role">我是队员（交材料）</div>
+          <ol class="qs-steps">
+            <li><b>存好材料</b>：发票、支付记录、机票订单 / 行程单（购票勿勾选保险）、酒店流水，拍照或截图保存。</li>
+            <li><b>一键导入</b>：到「材料打包」页用批量导入自动分类上传，再逐段核对金额、归属队员、去 / 返程勾选和收付款核对。</li>
+            <li><b>打包上交</b>：点「打包下载队伍 ZIP」，把文件发给报销负责人。</li>
+          </ol>
+          <button type="button" class="btn btn-primary btn-sm" @click="ui.tab = 'files'">去材料打包 →</button>
+        </div>
+        <div class="qs-col">
+          <div class="qs-role">我是队长 / 报销负责人</div>
+          <ol class="qs-steps">
+            <li><b>赛前</b>：确定报销负责人，在「同学清单」录全队一卡通号。</li>
+            <li><b>收材料</b>：收齐各队 ZIP，在「差旅审批单」填写信息，用「赛站汇总」把全部队伍和参赛费材料打包。</li>
+            <li><b>跟进</b>：按下方「报销办理流程」四步推进，未完成项会出现在「核对报告」。</li>
+          </ol>
+          <div class="qs-btns">
+            <button type="button" class="btn btn-sm" @click="ui.tab = 'members'">同学清单 →</button>
+            <button type="button" class="btn btn-sm" @click="ui.tab = 'approval'">差旅审批单 →</button>
+          </div>
+        </div>
+      </div>
+      <p class="hint" style="margin: 12px 0 0">
+        常见漏项：酒店流水、机票订单、行程单、参赛费支付记录；购票勿勾选保险；住宿发票盖章单位需与支付收款方一致（不一致找酒店开证明）。
+      </p>
+    </div>
     <div class="grid-2">
       <div class="card">
         <h2>本次行程信息</h2>
-        <p class="hint">填写后，清单、报告与打包文件名会自动带上这些信息。数据只保存在本机浏览器中。</p>
+        <p class="hint">队长 / 报销负责人填写（队员可跳过）。填写后，清单、报告与打包文件名会自动带上这些信息。数据只保存在本机浏览器中。</p>
         <div class="form-grid">
           <label class="field">
             <span>比赛名称</span>
@@ -75,7 +104,7 @@ async function copyTax() {
     </div>
 
     <div class="card">
-      <h2>报销办理流程</h2>
+      <h2>报销办理流程<span class="qs-who">（队长 / 报销负责人跟进）</span></h2>
       <p class="hint">四步依次勾选，未完成的步骤会出现在「核对报告」的待办事项里。</p>
       <div v-for="(f, i) in FLOW" :key="i" class="flow-item" :class="{ done: state.flow[i] }">
         <div class="num">{{ i + 1 }}</div>

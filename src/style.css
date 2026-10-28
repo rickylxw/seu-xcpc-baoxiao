@@ -566,3 +566,13 @@ footer .foot-note { margin: 0 auto 8px; max-width: 900px; line-height: 1.7; }
 footer .foot-meta { margin: 0; line-height: 1.7; color: #7d948f; }
 footer .foot-meta a { color: var(--primary); text-decoration: none; }
 footer .foot-meta a:hover { text-decoration: underline; }
+
+/* 快速上手（新手指引卡） */
+.quickstart { border: 1.5px solid var(--primary-border); background: linear-gradient(180deg, #f2faf7, #ffffff); }
+.qs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; margin-top: 8px; }
+.qs-role { font-weight: 700; font-size: 14px; color: var(--primary-ink); margin: 4px 0 8px; padding-left: 10px; border-left: 3px solid var(--primary); }
+.qs-steps { margin: 0 0 12px; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; font-size: 13.5px; line-height: 1.6; color: var(--ink); }
+.qs-steps b { color: var(--primary-ink); }
+.qs-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.qs-who { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+@media (max-width: 800px) { .qs-grid { grid-template-columns: 1fr; } }
