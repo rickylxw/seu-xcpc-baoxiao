@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { state } from '../store'
-import { TYPE_META, allSlotsOf } from '../data/packaging'
+import { computed, ref, watch } from 'vue'
+import { state, previewFile } from '../store'
+import { TYPE_META, allSlotsOf, slotsOf } from '../data/packaging'
+import { isImageName } from '../utils/misc'
 import { recognizeInto } from '../utils/pdfText'
 
 const props = defineProps({
@@ -11,6 +12,33 @@ const props = defineProps({
   showMeta: { type: Boolean, default: true }, // 是否显示类型/说明
 })
 const emit = defineEmits(['remove'])
+
+// ===== 收付款核对（发票开票方 vs 支付记录收款方，注意事项要求二者一致） =====
+const leg = props.leg
+if (!leg.payCheck) leg.payCheck = { issuer: '', payee: '', consistent: false, note: '' }
+const invoiceSlotIds = computed(() => slotsOf(leg.type).filter((s) => /发票/.test(s.name)).map((s) => s.id))
+const paySlotIds = computed(() => slotsOf(leg.type).filter((s) => /支付/.test(s.name)).map((s) => s.id))
+const payCheckVisible = computed(
+  () =>
+    leg.files.some((f) => invoiceSlotIds.value.includes(f.slot)) &&
+    leg.files.some((f) => paySlotIds.value.includes(f.slot)),
+)
+const metaIssuer = computed(() => {
+  const f = leg.files.find((x) => invoiceSlotIds.value.includes(x.slot) && x.meta && x.meta.issuer)
+  return (f && f.meta.issuer) || ''
+})
+const metaPayee = computed(() => {
+  const f = leg.files.find((x) => paySlotIds.value.includes(x.slot) && x.meta && x.meta.payee)
+  return (f && f.meta.payee) || ''
+})
+watch(
+  [metaIssuer, metaPayee],
+  ([iss, pay]) => {
+    if (iss && !leg.payCheck.issuer) leg.payCheck.issuer = iss
+    if (pay && !leg.payCheck.payee) leg.payCheck.payee = pay
+  },
+  { immediate: true },
+)
 
 const presetSlots = computed(() => (TYPE_META[props.leg.type] || TYPE_META.entryfee).slots)
 const customSlots = computed(() => props.leg.customSlots || [])
@@ -155,7 +183,12 @@ function changeType(ev) {
 
         <!-- 每个文件：金额 + 归属队员（往返交通文件另有去程/返程勾选） -->
         <div v-for="f in filesOf(s.id)" :key="f.id" class="file-row">
-          <span class="file-name" :title="f.file.name">{{ f.file.name }}</span>
+          <span
+            class="file-name"
+            :class="{ previewable: isImageName(f.file.name) }"
+            :title="isImageName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
+            @click="isImageName(f.file.name) && previewFile(f.file)"
+          >{{ f.file.name }}</span>
           <div class="fr-tags">
             <template v-if="showMeta && isTransport">
               <label class="mem-chk sm scope" title="该文件适用于去程">
@@ -180,6 +213,13 @@ function changeType(ev) {
               :title="f.meta.cabin.ok ? '含「经济舱」字样' : '未识别到「经济舱」字样，飞机仅限经济舱，请人工核对'"
             >
               {{ f.meta.cabin.ok ? '经济舱✓' : '未见经济舱⚠' }}
+            </span>
+            <span
+              v-if="f.meta && f.meta.scopeAuto"
+              class="pill ok"
+              :title="`按 OCR 起讫地 ${f.meta.scopeAuto} 自动勾选，可手动修改去程 / 返程`"
+            >
+              自动:{{ f.meta.scopeAuto }}
             </span>
           </div>
           <input v-model="f.amount" class="file-amount" placeholder="金额" inputmode="decimal" />
@@ -206,7 +246,12 @@ function changeType(ev) {
           </div>
         </div>
         <div v-for="f in filesOf(cs.id)" :key="f.id" class="file-row">
-          <span class="file-name" :title="f.file.name">{{ f.file.name }}</span>
+          <span
+            class="file-name"
+            :class="{ previewable: isImageName(f.file.name) }"
+            :title="isImageName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
+            @click="isImageName(f.file.name) && previewFile(f.file)"
+          >{{ f.file.name }}</span>
           <span
             v-if="f.meta && f.meta.header"
             class="pill"
@@ -249,6 +294,31 @@ function changeType(ev) {
             <span>金额：<b>{{ r.amounts.join(' / ') || '未识别' }}</b></span>
             <span>同学：<b>{{ r.members.length ? r.members.map((m) => m.name).join('、') : '未识别' }}</b></span>
           </template>
+        </div>
+        <div v-if="payCheckVisible" class="paycheck">
+          <div class="pc-title">
+            收付款核对 <span class="pc-hint">发票「开票方 / 盖章单位」应与支付记录「收款方」一致（注意事项要求），识别后自动填入，请核对修改</span>
+          </div>
+          <div class="pc-grid">
+            <label class="pc-field">
+              <span>发票开票方</span>
+              <input v-model="leg.payCheck.issuer" placeholder="从发票识别自动填入，可修改" />
+            </label>
+            <label class="pc-field">
+              <span>支付记录收款方</span>
+              <input v-model="leg.payCheck.payee" placeholder="从支付记录识别自动填入，可修改" />
+            </label>
+          </div>
+          <label class="mem-chk">
+            <input v-model="leg.payCheck.consistent" type="checkbox" />核对一致
+          </label>
+          <textarea
+            v-if="!leg.payCheck.consistent"
+            v-model="leg.payCheck.note"
+            class="pc-note"
+            rows="2"
+            placeholder="不一致时填写情况说明（如通过平台代订，收款方为平台），打包时将生成「收付款方不一致说明.txt」一并提交"
+          ></textarea>
         </div>
         <div class="slot-note">识别支持：文本型 PDF、图片（OCR）、OFD 发票、扫描件 PDF（部分浏览器不支持扫描件，请转图片后上传）。中文模型已内置，离线可用。</div>
       </div>

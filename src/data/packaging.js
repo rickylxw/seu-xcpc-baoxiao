@@ -2,8 +2,9 @@
 import { state, pkg } from '../store'
 import { makeZip } from '../utils/zip'
 import { readZipEntries, commonRoot } from '../utils/unzip'
+import { renderOfd, paintOfdPage } from '../utils/ofd'
 import { membersCSVString, sanitizeName } from '../utils/misc'
-import { buildApprovalDocxBlob } from './approval'
+import { buildApprovalDocxBlob, buildPayCheckDocxBlob } from './approval'
 import { PDFDocument } from 'pdf-lib'
 import { reportText, parseTodosSection } from './report'
 
@@ -60,6 +61,41 @@ export const TYPE_META = {
 }
 
 export const slotsOf = (type) => (TYPE_META[type] || TYPE_META.entryfee).slots
+
+/**
+ * 按文件名（及其所在文件夹路径，如「…/酒店/xxx.pdf」）猜测材料归属（批量导入自动分类用）。
+ * 返回 { groupId, type, slotId, scopeHint } 或 null（无法判断，导入预览里默认「不导入」）。
+ * scopeHint：文件名明确写「去程 / 返程」时给出，优先级高于识别文本的起讫地判断。
+ */
+export function classifyMaterial(name, path = '') {
+  const n = `${String(name || '')} ${String(path || '')}`
+  const has = (...words) => words.some((w) => n.includes(w))
+  // 「行程单」视为发票类（航空运输电子客票行程单可作报销凭证；12306 行程单已被下方火车分支优先拦下）
+  const inv = has('发票', '开票', '行程单')
+  const pay = has('支付', '付款', '账单', '扣款')
+  const scopeHint = has('去程') ? ['outbound'] : has('返程', '回程') ? ['return'] : null
+  if (has('邀请函')) return { groupId: 'entryfee', type: 'entryfee', slotId: 'invite', scopeHint: null }
+  if (has('报名费', '参赛费', '注册费', '赛站')) {
+    return { groupId: 'entryfee', type: 'entryfee', slotId: pay ? 'fee_pay' : 'fee_invoice', scopeHint: null }
+  }
+  if (has('酒店', '住宿', '宾馆', '民宿', '水单')) {
+    const slotId = inv ? 'h_invoice' : has('流水', '水单') ? 'h_flow' : 'h_pay'
+    return { groupId: 'stay', type: 'hotel', slotId, scopeHint: null }
+  }
+  // 火车类关键词优先于「行程单」（12306 行程单也含「行程单」字样）
+  if (has('火车', '高铁', '动车', '铁路', '12306', '车票')) {
+    return { groupId: 'transport', type: 'train', slotId: 't_voucher', scopeHint }
+  }
+  if (has('机票', '航空', '航班', '客票', '行程单', '登机', '值机')) {
+    const slotId = inv ? 'f_invoice' : pay ? 'f_pay' : 'f_order'
+    return { groupId: 'transport', type: 'flight', slotId, scopeHint }
+  }
+  if (has('出租', '滴滴', '网约车', '打车', '高德', '地铁', '公交', '市内')) {
+    return { groupId: 'transport', type: 'local', slotId: inv ? 'l_invoice' : 'l_pay', scopeHint }
+  }
+  // 类型判不出但范围词命中：只携带范围提示（导入预览仍默认「不导入」，手动改类型后范围自动生效）
+  return scopeHint ? { groupId: null, type: null, slotId: null, scopeHint } : null
+}
 
 /** 预设槽位 + 该段的自定义材料项（自定义项不参与必附检查） */
 export function allSlotsOf(leg) {
@@ -224,36 +260,18 @@ export async function buildInvoicesPdf() {
   for (const it of items) {
     try {
       if (/\.ofd$/i.test(it.file.name)) {
-        // OFD：提取文字层，重绘为文字参考页（非原件版式；原件请用开票平台下载的 PDF 打印）
-        const { extractOfdTextItems } = await import('../utils/pdfText.js')
-        const textItems = await extractOfdTextItems(it.file)
-        if (!textItems.length) throw new Error('OFD 内未提取到文字')
-        const cv = document.createElement('canvas')
-        cv.width = 1191
-        cv.height = 1684 // A4 @144dpi
-        const ctx = cv.getContext('2d')
-        ctx.fillStyle = '#fff'
-        ctx.fillRect(0, 0, cv.width, cv.height)
-        ctx.fillStyle = '#1c2b2a'
-        ctx.font = '22px SimSun, serif'
-        let ly = 80
-        for (const item of textItems) {
-          const maxW = cv.width - 160
-          let line = ''
-          for (const ch of item) {
-            if (ctx.measureText(line + ch).width > maxW) {
-              ctx.fillText(line, 80, ly)
-              ly += 34
-              line = ch
-            } else line += ch
-          }
-          ctx.fillText(line, 80, ly)
-          ly += 40
+        // OFD：按坐标原样渲染（模板框线、印章图片、定位文字），页面尺寸用 OFD 原始 mm 尺寸
+        const ofd = await renderOfd(it.file)
+        if (!ofd.pages.length) throw new Error('OFD 内没有页面')
+        for (const p of ofd.pages) {
+          const cv = document.createElement('canvas')
+          await paintOfdPage(cv, p, ofd.widthMm, ofd.heightMm)
+          const blob = await new Promise((r) => cv.toBlob(r, 'image/png'))
+          const img = await out.embedPng(new Uint8Array(await blob.arrayBuffer()))
+          const page = out.addPage([(ofd.widthMm * 72) / 25.4, (ofd.heightMm * 72) / 25.4])
+          page.drawImage(img, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() })
         }
-        const blob = await new Promise((r) => cv.toBlob(r, 'image/png'))
-        const img = await out.embedPng(new Uint8Array(await blob.arrayBuffer()))
-        const page = out.addPage([595.28, 841.89])
-        page.drawImage(img, { x: 0, y: 0, width: 595.28, height: 841.89 })
+        fileCount++
         continue
       }
       if (/\.pdf$/i.test(it.file.name)) {
@@ -442,11 +460,47 @@ ${memberLines}
       data: enc.encode('\ufeff' + L.join('\n')),
     })
   }
+  // 收付款方不一致：按官方模板生成情况说明书 docx（注意事项：开票盖章单位需与支付对象一致）
+  const payIssues = payCheckIssues()
+  if (payIssues.length) {
+    const blob = await buildPayCheckDocxBlob(payIssues)
+    files.push({
+      path: `${root}/发票与银行卡支付信息不符情况说明书.docx`,
+      data: new Uint8Array(await blob.arrayBuffer()),
+    })
+  }
   files.push({ path: `${root}/核对报告.txt`, data: enc.encode('﻿' + reportText()) })
 
   return makeZip(files.map((f) => ({ name: f.path, data: f.data })))
 }
 
+
+/** 收付款核对未通过的行程段（填了信息且未勾「核对一致」），用于生成官方模板的情况说明书 docx */
+export function payCheckIssues() {
+  const CONTENT_LABEL = { hotel: '住宿费', flight: '机票款', train: '火车票款', local: '交通费' }
+  const out = []
+  for (const g of GROUPS) {
+    for (const leg of pkg.legs.filter((l) => l.group === g.id)) {
+      const pc = leg.payCheck
+      if (!pc || (!pc.issuer && !pc.payee) || pc.consistent) continue
+      const invSlotIds = (TYPE_META[leg.type] || TYPE_META.entryfee).slots
+        .filter((s) => /发票/.test(s.name))
+        .map((s) => s.id)
+      const invFiles = invSlotIds.length ? leg.files.filter((f) => invSlotIds.includes(f.slot)) : []
+      const amounts = invFiles.map((f) => parseAmount(f.amount)).filter((v) => v != null)
+      out.push({
+        name: `${TYPE_META[leg.type] ? TYPE_META[leg.type].label : ''}${leg.label ? ' ' + leg.label : ''}`,
+        contentLabel: CONTENT_LABEL[leg.type] || '',
+        invSum: invFiles.length && amounts.length === invFiles.length ? Math.round(amounts.reduce((a, b) => a + b, 0) * 100) / 100 : null,
+        issuer: pc.issuer || '（未识别/未填写）',
+        payee: pc.payee || '（未识别/未填写）',
+        note: (pc.note || '').trim(),
+        filled: !!(pc.note || '').trim(),
+      })
+    }
+  }
+  return out
+}
 
 /**
  * 生成赛站汇总 ZIP（Blob）。

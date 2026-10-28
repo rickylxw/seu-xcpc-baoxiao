@@ -238,3 +238,67 @@ export function buildApprovalDocxBlob() {
     { name: 'word/document.xml', data: enc.encode(documentXml) },
   ])
 }
+
+/**
+ * 按《发票与银行卡支付信息不符情况说明书》官方模板生成说明 docx。
+ * items: [{ name, contentLabel, invSum, issuer, payee, note }]（每个行程段一笔）
+ * 版式对齐模板：标题 / 发票信息四行 / 不符事项勾选（此处勾「商户名称不符」）/ 承诺与签字栏。
+ */
+export function buildPayCheckDocxBlob(items) {
+  const paraRight = (text, opts = {}) =>
+    `<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:lineRule="exact" w:line="360"/><w:jc w:val="right"/></w:pPr>${run(text, opts)}</w:p>`
+
+  let body = para('发票与银行卡支付信息不符情况说明书', { b: true, sz: 32, center: true })
+  body += para('')
+  for (const it of items) {
+    body += para('发票信息', { b: true })
+    body += para('发票开具时间：        年      月      日')
+    body += para('发票号码：')
+    body += para(`发票内容：${it.contentLabel || '＿＿＿＿'}`)
+    body += para(`发票金额：${it.invSum != null ? it.invSum.toFixed(2) + ' 元' : '＿＿＿＿＿＿'}`)
+    body += para('不符事项及说明', { b: true })
+    body += para('☑ 商户名称不符')
+    body += para(
+      `发票单位名称为：${it.issuer} ，该笔费用银行卡支付单位为：${it.payee} ，不符原因为：${it.note || '（未填写）'} 。`,
+    )
+    body += para('□ 金额不符')
+    body += para(
+      '发票金额为：______元，该笔费用银行卡支付金额为：_______元 ，其中_________元用于本笔费用，差额原因为: _____________________________________________________ 。',
+    )
+    body += para('')
+  }
+  body += para('    本人承诺此次经济行为事项真实，以上说明情况属实，如有不实，愿承担与此相关的一切责任。')
+  body += para('')
+  body += paraRight('银行卡持卡人签字：')
+  body += paraRight('        年      月      日')
+  body += para('')
+  body += para('')
+  body += paraRight('项目负责人审批（签字、盖章）：')
+
+  const documentXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}` +
+    `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>` +
+    `</w:body></w:document>`
+
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+    `</Types>`
+
+  const rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
+    `</Relationships>`
+
+  const enc = new TextEncoder()
+  return makeZip([
+    { name: '[Content_Types].xml', data: enc.encode(contentTypes) },
+    { name: '_rels/.rels', data: enc.encode(rels) },
+    { name: 'word/document.xml', data: enc.encode(documentXml) },
+  ])
+}

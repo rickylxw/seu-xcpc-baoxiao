@@ -26,7 +26,7 @@ export const FLOW = [
 export function defaultState() {
   return {
     version: 2,
-    meta: { contest: '', dateContest: '', dateReturn: '', leader: '' },
+    meta: { contest: '', dateContest: '', dateReturn: '', leader: '', homeCity: '南京' },
     teamName: '',
     members: [], // { name, card }
     flow: [false, false, false, false],
@@ -110,7 +110,22 @@ if (typeof window !== 'undefined') addEventListener('beforeunload', saveNow)
 /** 文件打包（材料分段与文件）：File 对象无法序列化，仅保存在内存中 */
 export const pkg = reactive({ legs: [], cross: [] })
 
-export const ui = reactive({ tab: 'overview', printTarget: '' })
+export const ui = reactive({ tab: 'overview', printTarget: '', preview: null })
+
+/** 图片预览浮层：懒创建 objectURL，关闭时立即释放 */
+export function previewFile(file) {
+  closePreview()
+  ui.preview = { url: URL.createObjectURL(file), name: file.name }
+}
+export function closePreview() {
+  if (!ui.preview) return
+  URL.revokeObjectURL(ui.preview.url)
+  ui.preview = null
+}
+
+/** 识别进度统计（recognizeInto 每次调用自增；仅供界面展示进度与预计结束时间） */
+export const recogStats = reactive({ total: 0, done: 0, running: 0, startedAt: 0, durationsMs: [] })
+if (typeof window !== 'undefined') window.__recogStats = recogStats
 
 let toastTimer = null
 export const toast = reactive({ msg: '', show: false })

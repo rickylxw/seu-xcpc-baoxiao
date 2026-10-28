@@ -201,7 +201,7 @@ function finalize(content, members) {
     const found = detectPlainAmounts(content)
     amounts = found
   }
-  return { text: content, amounts, detected, header, cabin: [] }
+  return { text: content, amounts, detected, header, cabin: null }
 }
 
 function detectPlainAmounts(t) {

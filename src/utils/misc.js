@@ -72,3 +72,8 @@ export function membersCSVString(members) {
 export function membersText(members) {
   return ['姓名\t一卡通号', ...members.map((m) => `${m.name || '—'}\t${m.card || '—'}`)].join('\n')
 }
+
+/** 常见图片扩展名（决定文件名是否可点击预览；浏览器按内容嗅探渲染，扩展名误标无碍） */
+export function isImageName(n) {
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(n || '')
+}

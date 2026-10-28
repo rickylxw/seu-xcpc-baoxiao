@@ -5,4 +5,10 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   base: './',
+  server: {
+    watch: {
+      // Windows 上监听器碰到被其他进程占用/瞬移的临时文件会 EBUSY 致命崩溃，忽略之
+      ignored: ['**/tmp-out/**', '**/tmp-real/**', '**/*.tmp'],
+    },
+  },
 })

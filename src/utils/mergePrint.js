@@ -1,7 +1,7 @@
 /* 合并打印：按清单顺序把全部材料合并为一个大 PDF（图片排 A4 页、PDF 无损合并页面） */
 import { state, pkg } from '../store'
 import { GROUPS, TYPE_META, allSlotsOf, slotNameOf, scopeLabelOf } from '../data/packaging'
-import { extractOfdTextItems } from './pdfText'
+import { renderOfd, paintOfdPage } from './ofd'
 import { PDFDocument } from 'pdf-lib'
 
 const isPdf = (name) => /\.pdf$/i.test(name)
@@ -91,36 +91,19 @@ export async function buildMergedPdf() {
         try {
           let pages
           if (isOfd(f.file.name)) {
-            // OFD：提取文字层，重绘为文字参考页（非原件版式；原件请用开票平台下载的 PDF 打印）
-            const items = await extractOfdTextItems(f.file)
-            if (!items.length) throw new Error('OFD 内未提取到文字')
-            const cv = document.createElement('canvas')
-            cv.width = 1191
-            cv.height = 1684 // A4 @144dpi
-            const ctx = cv.getContext('2d')
-            ctx.fillStyle = '#fff'
-            ctx.fillRect(0, 0, cv.width, cv.height)
-            ctx.fillStyle = '#1c2b2a'
-            ctx.font = '22px SimSun, serif'
-            let y = 80
-            for (const it of items) {
-              const maxW = cv.width - 160
-              let line = ''
-              for (const ch of it) {
-                if (ctx.measureText(line + ch).width > maxW) {
-                  ctx.fillText(line, 80, y)
-                  y += 34
-                  line = ch
-                } else line += ch
-              }
-              ctx.fillText(line, 80, y)
-              y += 40
+            // OFD：按坐标原样渲染（模板框线、印章图片、定位文字），页面尺寸用 OFD 原始 mm 尺寸
+            const ofd = await renderOfd(f.file)
+            if (!ofd.pages.length) throw new Error('OFD 内没有页面')
+            pages = []
+            for (const p of ofd.pages) {
+              const cv = document.createElement('canvas')
+              await paintOfdPage(cv, p, ofd.widthMm, ofd.heightMm)
+              const blob = await new Promise((r) => cv.toBlob(r, 'image/png'))
+              const img = await out.embedPng(await blob.arrayBuffer())
+              const page = out.addPage([(ofd.widthMm * 72) / 25.4, (ofd.heightMm * 72) / 25.4])
+              page.drawImage(img, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() })
+              pages.push(page)
             }
-            const blob = await new Promise((r) => cv.toBlob(r, 'image/png'))
-            const img = await out.embedPng(await blob.arrayBuffer())
-            const page = out.addPage([595.28, 841.89])
-            page.drawImage(img, { x: 0, y: 0, width: 595.28, height: 841.89 })
-            pages = [page]
           } else if (isPdf(f.file.name)) {
             const src = await PDFDocument.load(await f.file.arrayBuffer(), { ignoreEncryption: true })
             pages = await out.copyPages(src, src.getPageIndices())

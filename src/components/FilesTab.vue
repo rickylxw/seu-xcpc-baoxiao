@@ -1,24 +1,28 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
-import { state, pkg, showToast } from '../store'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { state, pkg, showToast, recogStats, previewFile } from '../store'
 import {
   GROUPS,
   TYPE_META,
+  slotsOf,
+  classifyMaterial,
   missingRequired,
   memberCoverage,
   coverageGaps,
   invoiceHeaderIssues,
   cabinIssues,
   amountCheck,
+  payCheckIssues,
   buildTeamZipBlob,
   buildStationZipBlob,
   buildInvoicesPdf,
 } from '../data/packaging'
 import { readZipEntries } from '../utils/unzip'
-import { downloadBlob, sanitizeName } from '../utils/misc'
+import { downloadBlob, sanitizeName, isImageName } from '../utils/misc'
 import { parseTodosSection } from '../data/report'
 import { buildMergedPdf, mergeHeader } from '../utils/mergePrint'
 import { fetchModelList } from '../utils/serverRecog'
+import { recognizeInto } from '../utils/pdfText'
 import LegCard from './LegCard.vue'
 
 const mode = ref('team') // team | station
@@ -46,6 +50,122 @@ function presetDeploy() {
   showToast('已切换为部署服务器同源代理（/v1）')
 }
 const busy = ref(false)
+
+// 识别进度与预计结束时间：每秒刷新一次（仅在识别进行中时启动计时器）
+const nowTick = ref(Date.now())
+let recogTimer = null
+const recogActive = computed(() => recogStats.total > 0 && recogStats.done < recogStats.total)
+watch(
+  recogActive,
+  (on) => {
+    if (on && !recogTimer) recogTimer = setInterval(() => (nowTick.value = Date.now()), 1000)
+    if (!on && recogTimer) {
+      clearInterval(recogTimer)
+      recogTimer = null
+    }
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => recogTimer && clearInterval(recogTimer))
+const recogProgress = computed(() => {
+  const { total, done, running, startedAt, durationsMs } = recogStats
+  if (!total || done >= total) return null
+  const avg = durationsMs.length ? durationsMs.reduce((a, b) => a + b, 0) / durationsMs.length : 0
+  // 首个文件完成前没有实测耗时，用 3 秒兜底；之后按滚动平均耗时 × 剩余数 ÷ 当前进度并行数估算
+  const remainMs = (Math.max(avg, 3000) * (total - done)) / Math.max(1, running)
+  return {
+    total,
+    done,
+    running,
+    pct: Math.round((done / total) * 100),
+    elapsedMs: startedAt ? nowTick.value - startedAt : 0,
+    remainMs,
+    finishAt: new Date(nowTick.value + remainMs),
+  }
+})
+const fmtDur = (ms) => {
+  const s = Math.max(1, Math.round(ms / 1000))
+  return s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`
+}
+const fmtClock = (d) => d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+
+// ===== 批量导入（自动分类填充） =====
+const impEl = ref(null)
+const impDirEl = ref(null)
+const impBusy = ref(false)
+const impList = reactive([]) // { file, name(含文件夹相对路径), target: 'groupId|type|slotId' | 'skip' }
+let impFid = 1
+const impOptions = [
+  ...GROUPS.flatMap((g) =>
+    g.types.flatMap((t) =>
+      slotsOf(t).map((s) => ({ value: `${g.id}|${t}|${s.id}`, label: `${g.name} · ${TYPE_META[t].label} · ${s.name}` })),
+    ),
+  ),
+  ...TYPE_META.entryfee.slots.map((s) => ({ value: `entryfee|entryfee|${s.id}`, label: `赛站汇总 · ${s.name}` })),
+  { value: 'skip', label: '不导入' },
+]
+const IMP_EXT = /\.(pdf|ofd|png|jpe?g|webp|bmp)$/i
+function onImpPick(e) {
+  const seen = new Set(impList.map((r) => `${r.name}:${r.file.size}`))
+  for (const f of e.target.files) {
+    // 文件夹模式下会带出全部文件：只收支持的类型，跳过隐藏文件与重复选择
+    const rel = f.webkitRelativePath || f.name
+    if (f.name.startsWith('.') || !IMP_EXT.test(f.name)) continue
+    const key = `${rel}:${f.size}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const c = classifyMaterial(f.name, rel)
+    impList.push({ file: f, name: rel, target: c && c.groupId ? `${c.groupId}|${c.type}|${c.slotId}` : 'skip' })
+  }
+  e.target.value = ''
+}
+function ensureLeg(groupId, type) {
+  let leg = pkg.legs.find((l) => l.group === groupId && l.type === type)
+  if (!leg) {
+    pkg.legs.push({ id: `L${uidN++}`, group: groupId, type, label: '', memberIdx: null, files: [], customSlots: [] })
+    leg = pkg.legs[pkg.legs.length - 1]
+  }
+  return leg
+}
+function slotNameOfId(type, slotId) {
+  const slots = TYPE_META[type] ? TYPE_META[type].slots : TYPE_META.entryfee.slots
+  return (slots.find((s) => s.id === slotId) || {}).name || slotId
+}
+function applyImport() {
+  impBusy.value = true
+  let n = 0
+  try {
+    for (const row of impList) {
+      if (row.target === 'skip') continue
+      const [groupId, type, slotId] = row.target.split('|')
+      const slotName = slotNameOfId(type, slotId)
+      const hint = (classifyMaterial(row.name) || {}).scopeHint || null
+      if (groupId === 'entryfee') {
+        efFiles.push({ id: `EF${efFid++}_${Date.now()}`, file: row.file, slot: slotId })
+        const obj = efFiles[efFiles.length - 1]
+        recognizeInto(obj, state.members, state.serverOcr, slotName)
+      } else {
+        const leg = ensureLeg(groupId, type)
+        leg.files.push({
+          id: `FI${impFid++}_${Date.now()}`,
+          file: row.file,
+          slot: slotId,
+          amount: '',
+          members: null,
+          scope: groupId === 'transport' ? hint || ['outbound', 'return'] : [],
+          meta: null,
+        })
+        const obj = leg.files[leg.files.length - 1]
+        recognizeInto(obj, state.members, state.serverOcr, slotName)
+      }
+      n++
+    }
+    impList.splice(0)
+    showToast(`已导入 ${n} 个文件，识别进行中…`)
+  } finally {
+    impBusy.value = false
+  }
+}
 
 const legsOf = (gid) => pkg.legs.filter((l) => l.group === gid)
 let uidN = 100
@@ -194,6 +314,19 @@ async function packTeam() {
   ) {
     return
   }
+  const pcIssues = payCheckIssues()
+  const pcNoNote = pcIssues.filter((p) => !p.filled)
+  if (
+    pcNoNote.length &&
+    !confirm(
+      `有 ${pcNoNote.length} 个行程段收付款方核对不一致且未填写说明（${pcNoNote
+        .slice(0, 3)
+        .map((p) => p.name)
+        .join('；')}${pcNoNote.length > 3 ? ' 等' : ''}），说明中将标注「未填写」。确定仍要打包？`,
+    )
+  ) {
+    return
+  }
   const cabins = cabinInfo.value.issues
   if (
     cabins.length &&
@@ -312,6 +445,24 @@ async function packStation() {
       <button :class="{ active: mode === 'station' }" @click="mode = 'station'">赛站汇总（负责人）</button>
     </div>
 
+    <div v-if="recogProgress" class="notice amber" style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px">
+      <div style="flex: 1; height: 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.08); overflow: hidden">
+        <div
+          :style="{
+            width: recogProgress.pct + '%',
+            height: '100%',
+            borderRadius: '4px',
+            background: '#2e7d6b',
+            transition: 'width .4s',
+          }"
+        ></div>
+      </div>
+      <span style="white-space: nowrap">
+        识别中 {{ recogProgress.done }}/{{ recogProgress.total }} · 已用时 {{ fmtDur(recogProgress.elapsedMs) }} ·
+        预计还需约 {{ fmtDur(recogProgress.remainMs) }} · 预计 <b>{{ fmtClock(recogProgress.finishAt) }}</b> 全部完成
+      </span>
+    </div>
+
     <!-- ========== 按队伍打包 ========== -->
     <template v-if="mode === 'team'">
       <div class="card">
@@ -330,6 +481,36 @@ async function packStation() {
           按「往返交通 → 赛站住宿」逐段添加行程并上传对应材料；交通分为飞机 / 高铁 /
           市内交通，每段可添加多段；每个文件单独勾选去程 / 返程、金额与归属队员，打包时自动规范命名。参赛费材料归赛站汇总负责人统一收取，不在队伍包内。
         </p>
+      </div>
+
+      <div class="card">
+        <h2>批量导入（自动分类填充）</h2>
+        <p class="hint">
+          一次选择全套材料或整个文件夹（自动跳过不支持的文件类型），按文件名与文件夹名自动分类到对应槽位；文件名含「去程 /
+          返程」会直接勾好，导入后自动识别金额、归属队员与起讫地。分类不对的可在下拉框里改，识别不出类别的默认「不导入」。
+        </p>
+        <div class="btn-row" style="margin: 0 0 8px">
+          <button type="button" class="btn" @click="impEl.click()">📂 选择材料文件</button>
+          <button type="button" class="btn" @click="impDirEl.click()">📁 选择材料文件夹</button>
+          <span v-if="impList.length" class="hint" style="margin: 0">已选 {{ impList.length }} 个</span>
+          <span style="flex: 1"></span>
+          <template v-if="impList.length">
+            <button type="button" class="btn" @click="impList.splice(0)">取消</button>
+            <button type="button" class="btn btn-primary" :disabled="impBusy" @click="applyImport">
+              ✓ 确认导入
+            </button>
+          </template>
+        </div>
+        <input ref="impEl" type="file" multiple hidden accept=".pdf,.ofd,.png,.jpg,.jpeg,.webp,.bmp" @change="onImpPick" />
+        <input ref="impDirEl" type="file" multiple hidden webkitdirectory directory @change="onImpPick" />
+        <div v-if="impList.length" class="imp-list">
+          <div v-for="(row, i) in impList" :key="row.name + i" class="imp-row">
+            <span class="file-name" :title="row.name">{{ row.name }}</span>
+            <select v-model="row.target" class="imp-select">
+              <option v-for="o in impOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -599,8 +780,15 @@ async function packStation() {
               <div v-if="s.note" class="slot-note">{{ s.note }}</div>
             </div>
             <div class="slot-files">
-              <span v-for="f in efFilesOf(s.id)" :key="f.id" class="file-chip" :title="f.file.name">
-                {{ f.file.name }}<button type="button" title="移除" @click="removeEf(f)">×</button>
+              <span
+                v-for="f in efFilesOf(s.id)"
+                :key="f.id"
+                class="file-chip"
+                :class="{ previewable: isImageName(f.file.name) }"
+                :title="isImageName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
+                @click="isImageName(f.file.name) && previewFile(f.file)"
+              >
+                {{ f.file.name }}<button type="button" title="移除" @click.stop="removeEf(f)">×</button>
               </span>
               <button type="button" class="btn btn-sm" @click="browseEf(s.id)">＋ 上传</button>
             </div>

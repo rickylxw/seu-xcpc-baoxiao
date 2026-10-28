@@ -42,8 +42,12 @@ async function copyTax() {
             <input v-model="state.meta.leader" placeholder="负责汇总报销的同学姓名" />
           </label>
           <label class="field">
+            <span>出发城市（自动识别去程 / 返程用）</span>
+            <input v-model="state.meta.homeCity" placeholder="如：南京" />
+          </label>
+          <label class="field">
             <span>所到省份、城市（用于差旅审批单）</span>
-            <input v-model="state.approval.place" placeholder="如：江苏省 南京市" />
+            <input v-model="state.approval.place" placeholder="如：吉林省 长春市" />
           </label>
           <label class="field">
             <span>所到单位（用于差旅审批单）</span>

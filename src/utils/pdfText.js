@@ -10,6 +10,7 @@ globalThis.pdfjsWorker = pdfjsWorker
 import { ocrImageToText } from './ocr'
 import { readZipEntries } from './unzip'
 import { recognizeViaServer } from './serverRecog'
+import { state, recogStats } from '../store'
 
 /** 提取 PDF 文本（最多前 5 页）；失败抛出异常 */
 export async function extractPdfText(file) {
@@ -134,10 +135,22 @@ const isImageFile = (name) => /\.(jpe?g|png|gif|webp|bmp)$/i.test(name)
 const SCHOOL = '东南大学'
 const TAX_ID = '12100000466006770Q'
 
+/** 需要做发票抬头检查的槽位（支付记录、行程单、车票凭证等一律不查抬头） */
+export const INVOICE_HEADER_SLOTS = ['f_invoice', 'h_invoice', 'l_invoice', 'fee_invoice']
+
 /**
- * 发票抬头检查：材料像发票（槽位/文件名/内容含「发票」）且文字足够时，
- * 检查是否含「东南大学」或税号。返回 { ok } 或 null（不适用/无法判断）。
+ * 发票抬头检查：仅对发票类槽位（名称含「发票」）生效，检查是否含「东南大学」或税号。
+ * 支付记录即使截图文字里出现「发票」字样也不查。返回 { ok } 或 null（不适用/无法判断）。
  */
+export function invoiceHeaderCheck(slotId, slotName, fileName, text) {
+  if (!INVOICE_HEADER_SLOTS.includes(slotId)) return null
+  const norm = (text || '').replace(/\s+/g, '')
+  const hay = `${slotName || ''} ${fileName || ''} ${norm}`
+  if (!/发票/.test(hay)) return null
+  if (norm.length < 10) return null
+  return { ok: norm.includes(SCHOOL) || norm.includes(TAX_ID) }
+}
+
 /**
  * 机票舱位检查：机票发票 / 机票订单记录（行程单）需显示「经济舱」字样（飞机仅限经济舱）。
  * 返回 { ok } 或 null（不适用/文字太少无法判断）。
@@ -157,16 +170,111 @@ export function trainSeatCheck(slotId, text) {
   return norm.includes('二等座') ? { ok: true } : null
 }
 
-export function invoiceHeaderCheck(slotName, fileName, text) {
-  const norm = (text || '').replace(/\s+/g, '')
-  const hay = `${slotName || ''} ${fileName || ''} ${norm}`
-  if (!/发票/.test(hay)) return null
-  if (norm.length < 10) return null
-  return { ok: norm.includes(SCHOOL) || norm.includes(TAX_ID) }
+/** 支付类槽位（做收款方提取，供收付款核对） */
+const PAY_PARTY_SLOTS = ['f_pay', 'h_pay', 'l_pay', 'fee_pay']
+
+/**
+ * 从识别文本提取单位名（「××公司/酒店/银行」等形式），labels 为候选标签。
+ * 只认「标签 + 单位后缀」的严格形式；匹配不到就返回空（自动填入宁缺勿错，可手填）。
+ */
+export function extractParty(text, labels) {
+  const norm = String(text || '').replace(/\s+/g, '')
+  if (!norm) return ''
+  for (const label of labels) {
+    const m = norm.match(
+      new RegExp(`${label}[名称：:]{0,3}([^，。；;、|\\d]{2,28}?(?:公司|银行|酒店|饭店|宾馆|商行|集团|中心|事务所|门市部))`),
+    )
+    if (m && m[1]) return m[1]
+  }
+  return ''
+}
+
+/** 识别完成后提取发票开票方（发票槽位）与支付收款方（支付槽位），写入 meta 供收付款核对预填 */
+function applyParty(fileObj, text) {
+  if (INVOICE_HEADER_SLOTS.includes(fileObj.slot)) {
+    const issuer = extractParty(text, ['销售方', '开票方', '开票单位', '卖方', '开票人'])
+    if (issuer) fileObj.meta.issuer = issuer
+  }
+  if (PAY_PARTY_SLOTS.includes(fileObj.slot)) {
+    const payee = extractParty(text, ['收款方', '收款单位', '收款人', '商户', '对方'])
+    if (payee) fileObj.meta.payee = payee
+  }
+}
+
+/** 往返交通材料的槽位（可按起讫地自动勾选去程 / 返程） */
+const SCOPE_TRANSPORT_SLOTS = ['f_invoice', 'f_pay', 'f_order', 't_voucher']
+
+/** 从「所到省份、城市」（如「吉林省 长春市」）取出城市名，用于起讫地匹配 */
+function destCityOf() {
+  const place = String((state.approval && state.approval.place) || '').trim()
+  if (!place) return ''
+  const last = place.split(/[\s,，、/]+/).filter(Boolean).pop() || ''
+  return last.replace(/(市|地区|自治州|盟|旗)$/, '') || last
+}
+
+/**
+ * 按 OCR 文本里的起讫地判断去程 / 返程：
+ * 只认真实路线分隔符（→、-、至、到、飞往、抵达…），在其两侧 24 字窗口内找出发/到达
+ * 城市名；无分隔符命中时返回 null（宁可不自动勾选，也不凭城市共现瞎猜方向）。
+ * 返回 { scope: 'outbound'|'return'|'both', label } 或 null（无法判断/未配置城市）。
+ */
+export function routeScopeCheck(text, homeCity, destCity) {
+  const home = String(homeCity || '').trim()
+  const dest = String(destCity || '').trim()
+  if (!home || !dest) return null
+  const norm = String(text || '').replace(/\s+/g, '')
+  if (norm.length < 4) return null
+  let out = false
+  let back = false
+  const seps = [...norm.matchAll(/[→⇒➔➤↦\-–—~～]|至|到|飞往|飞抵|抵达|返回|出发/g)].map((m) => m.index)
+  for (const p of seps) {
+    const left = norm.slice(Math.max(0, p - 24), p)
+    const right = norm.slice(p + 1, p + 25)
+    if (left.includes(home) && right.includes(dest)) out = true
+    if (left.includes(dest) && right.includes(home)) back = true
+  }
+  if (out && back) return { scope: 'both', label: `${home}⇄${dest}` }
+  if (out) return { scope: 'outbound', label: `${home}→${dest}` }
+  if (back) return { scope: 'return', label: `${dest}→${home}` }
+  // 兜底：行程单 / 表格版式没有分隔符（如 OFD「南京 禄口 … 18:30 … 长春 龙嘉」列序），
+  // 两城紧邻（48 字内）共现时按先出现者为出发地；相距远视为无关提及，不猜。
+  const h = norm.indexOf(home)
+  const d = norm.indexOf(dest)
+  if (h !== -1 && d !== -1 && Math.abs(h - d) <= 48) {
+    return h < d ? { scope: 'outbound', label: `${home}→${dest}` } : { scope: 'return', label: `${dest}→${home}` }
+  }
+  return null
+}
+
+/** 识别完成后按起讫地自动勾选去程 / 返程（仅往返交通材料；结果记入 meta.scopeAuto 供界面展示） */
+function applyAutoScope(fileObj, text) {
+  if (!SCOPE_TRANSPORT_SLOTS.includes(fileObj.slot)) return
+  // 文件名已明确去/返（批量导入时按提示预勾，只剩一项）时不覆盖
+  if ((fileObj.scope || []).length === 1) return
+  const rs = routeScopeCheck(text, state.meta.homeCity, destCityOf())
+  if (!rs) return
+  fileObj.scope = rs.scope === 'both' ? ['outbound', 'return'] : [rs.scope]
+  fileObj.meta.scopeAuto = rs.label
 }
 
 /** 识别结果写入 file 对象的 meta 字段（异步；错误记录在 meta.error；via 标记识别方式） */
+/** 计时包装：统计总数/完成数/并发数/近期耗时，供界面显示进度与预计结束时间 */
 export async function recognizeInto(fileObj, members, cfg = null, slotName = '') {
+  recogStats.total++
+  recogStats.running++
+  if (!recogStats.startedAt) recogStats.startedAt = Date.now()
+  const t0 = Date.now()
+  try {
+    return await recognizeIntoImpl(fileObj, members, cfg, slotName)
+  } finally {
+    recogStats.running--
+    recogStats.done++
+    recogStats.durationsMs.push(Date.now() - t0)
+    if (recogStats.durationsMs.length > 20) recogStats.durationsMs.shift()
+  }
+}
+
+async function recognizeIntoImpl(fileObj, members, cfg = null, slotName = '') {
   const name = fileObj.file.name
   const isImage = isImageFile(name)
   const isPdfFile = /\.pdf$/i.test(name)
@@ -183,20 +291,28 @@ export async function recognizeInto(fileObj, members, cfg = null, slotName = '')
         note: r.amounts.length || r.detected.length ? '' : '服务器未识别到有效信息',
         amounts: r.amounts,
         members: r.detected,
-        header: r.header || null,
-        cabin: r.cabin || null,
+        // 抬头只对发票槽位有意义；经济舱只对机票发票/订单有意义——支付记录等一律不检查
+        header: INVOICE_HEADER_SLOTS.includes(fileObj.slot) && r.header ? r.header : null,
+        cabin:
+          (fileObj.slot === 'f_invoice' || fileObj.slot === 'f_order') &&
+          r.cabin &&
+          typeof r.cabin.ok === 'boolean'
+            ? r.cabin
+            : null,
         trainSeat: null,
         via: 'server',
         serverError: serverErr,
       }
       if (r.amounts.length && !fileObj.amount) fileObj.amount = String(r.amounts[0].replace('¥', ''))
       if (r.detected.length) fileObj.members = r.detected.map((d) => d.i)
+      applyAutoScope(fileObj, r.text || '')
+      applyParty(fileObj, r.text || '')
       return
     } catch (e) {
       serverErr = (e && e.message) || String(e)
       fileObj.meta = {
         busy: true,
-        error: '服务器识别失败：' + msg,
+        error: '服务器识别失败：' + serverErr,
         amounts: [],
         members: [],
         via: 'local',
@@ -265,13 +381,15 @@ export async function recognizeInto(fileObj, members, cfg = null, slotName = '')
         note: text ? '' : ocrNote || '未提取到文字',
         amounts,
         members: detected,
-        header: invoiceHeaderCheck(slotName, fileObj.file.name, text),
+        header: invoiceHeaderCheck(fileObj.slot, slotName, fileObj.file.name, text),
         cabin: cabinCheck(fileObj.slot, text),
         trainSeat: trainSeatCheck(fileObj.slot, text),
         serverError: serverErr,
       }
       if (amounts.length && !fileObj.amount) fileObj.amount = String(amounts[0].replace('¥', ''))
       if (detected.length) fileObj.members = detected.map((m) => m.i)
+      applyAutoScope(fileObj, text)
+      applyParty(fileObj, text)
     } catch (e) {
       fileObj.meta = { busy: false, error: (e && e.message) || String(e), note: '', amounts: [], members: [] }
     }
@@ -291,13 +409,15 @@ export async function recognizeInto(fileObj, members, cfg = null, slotName = '')
         note: text ? '' : 'OFD 内未提取到文字（可能是纯图片版式）',
         amounts,
         members: detected,
-        header: invoiceHeaderCheck(slotName, fileObj.file.name, text),
+        header: invoiceHeaderCheck(fileObj.slot, slotName, fileObj.file.name, text),
         cabin: cabinCheck(fileObj.slot, text),
         trainSeat: trainSeatCheck(fileObj.slot, text),
       }
       // 与 PDF / 图片分支一致：识别结果回填金额与归属
       if (amounts.length && !fileObj.amount) fileObj.amount = String(amounts[0].replace('¥', ''))
       if (detected.length) fileObj.members = detected.map((m) => m.i)
+      applyAutoScope(fileObj, text)
+      applyParty(fileObj, text)
     } catch (e) {
       fileObj.meta = { busy: false, error: 'OFD 解析失败：' + ((e && e.message) || String(e)), note: '', amounts: [], members: [] }
     }
@@ -318,13 +438,15 @@ export async function recognizeInto(fileObj, members, cfg = null, slotName = '')
         note: text ? '' : '未识别到文字，请确保图片清晰、文字方向正确',
         amounts,
         members: detected,
-        header: invoiceHeaderCheck(slotName, fileObj.file.name, text),
+        header: invoiceHeaderCheck(fileObj.slot, slotName, fileObj.file.name, text),
         cabin: cabinCheck(fileObj.slot, text),
         trainSeat: trainSeatCheck(fileObj.slot, text),
         serverError: serverErr,
       }
       if (amounts.length && !fileObj.amount) fileObj.amount = String(amounts[0].replace('¥', ''))
       if (detected.length) fileObj.members = detected.map((m) => m.i)
+      applyAutoScope(fileObj, text)
+      applyParty(fileObj, text)
     } catch (e) {
       fileObj.meta = {
         busy: false,

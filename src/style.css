@@ -510,3 +510,59 @@ footer { text-align: center; color: #8fa5a0; font-size: 12px; padding: 18px 20px
   .file-name { max-width: 200px; }
   .progress-bar { width: 110px; }
 }
+
+/* ========== 图片预览浮层（点击图片文件名打开） ========== */
+.img-viewer {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(12, 22, 20, 0.85);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 20px;
+}
+.img-viewer .iv-bar { display: flex; align-items: center; gap: 14px; width: 100%; max-width: min(1100px, 92vw); color: #eaf4f1; }
+.img-viewer .iv-name { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.img-viewer .iv-close {
+  border: 1px solid rgba(255, 255, 255, 0.35); background: transparent; color: #eaf4f1;
+  border-radius: 8px; padding: 5px 14px; cursor: pointer; font-size: 13px;
+}
+.img-viewer .iv-close:hover { background: rgba(255, 255, 255, 0.14); }
+.img-viewer .iv-img {
+  max-width: 92vw; max-height: 78vh; object-fit: contain;
+  border-radius: 10px; box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55); background: #fff;
+}
+.img-viewer .iv-tip { color: rgba(234, 244, 241, 0.6); font-size: 12px; }
+
+/* 可预览的文件名 / 文件 chip */
+.file-name.previewable { cursor: zoom-in; text-decoration: underline dotted; text-underline-offset: 3px; }
+.file-name.previewable:hover { color: var(--primary); }
+.file-chip.previewable { cursor: zoom-in; }
+.file-chip.previewable:hover { border-color: var(--primary); color: var(--primary-dark); }
+
+/* 批量导入预览列表 */
+.imp-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.imp-row { display: flex; align-items: center; gap: 12px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.imp-row .file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-select { max-width: 320px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 5px 8px; font-size: 13px; background: #fff; color: var(--ink); }
+
+/* 收付款核对区（LegCard 底部） */
+.paycheck {
+  margin-top: 12px; padding: 12px 14px;
+  border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--primary-bg);
+}
+.paycheck .pc-title { font-size: 13px; font-weight: 600; color: var(--primary-ink); margin-bottom: 10px; }
+.paycheck .pc-hint { font-weight: 400; font-size: 12px; color: var(--muted); }
+.paycheck .pc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-bottom: 10px; }
+.paycheck .pc-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.paycheck .pc-field input {
+  border: 1px solid var(--line-strong); border-radius: 8px; padding: 6px 10px;
+  font-size: 13px; color: var(--ink); background: #fff;
+}
+.paycheck .pc-note {
+  width: 100%; margin-top: 8px; border: 1px solid var(--line-strong); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; color: var(--ink); font-family: inherit; resize: vertical;
+}
+
+/* 页脚：项目信息行 */
+footer .foot-note { margin: 0 auto 8px; max-width: 900px; line-height: 1.7; }
+footer .foot-meta { margin: 0; line-height: 1.7; color: #7d948f; }
+footer .foot-meta a { color: var(--primary); text-decoration: none; }
+footer .foot-meta a:hover { text-decoration: underline; }
