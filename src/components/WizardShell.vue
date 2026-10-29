@@ -26,36 +26,42 @@ const steps = computed(() => {
         key: 'l0', tab: 'overview', title: '先收齐两样东西', hint: '开始前先向各队队长收齐打包材料',
         show: ['快速上手'],
         guide: [
-          { t: '各队 ZIP', d: '队长们在「材料打包」页打包的队伍材料包' },
+          { t: '各队 ZIP', d: '队长们在「材料打包」页打包的队伍材料包（内含该队同学清单与核对报告）' },
           { t: '参赛费材料', d: '参赛费发票、支付记录、邀请函（由负责人统一收取）' },
         ],
       },
       {
-        key: 'l1', tab: 'members', title: '录入同学清单', hint: '收齐各队参赛同学一卡通号后录入，用于归属核对与清单导出',
+        key: 'l1', tab: 'files', title: '导入各队 ZIP', hint: '在「赛站汇总（负责人）」模式下导入各队 ZIP；自动提取每队名单与待办清单', scrollTo: '参赛费', filesMode: 'station', show: ['参赛费材料'],
         guide: [
-          { t: '批量录入', d: '支持把「姓名 一卡通号」名单整段粘贴，自动拆分；也可逐个添加' },
-          { t: '导出留档', d: '可导出 CSV（Excel 打开不乱码）或复制文本发群里核对' },
-          { t: '用途', d: '名单用于每个文件的归属勾选、审批单出差人、打包的同学清单 CSV' },
+          { t: '导入', d: '拖入或选择各队 ZIP；自动解包、按队归档' },
+          { t: '自动提取名单', d: '各队 ZIP 内的同学清单自动解析，可一键汇总进「同学清单」' },
+          { t: '自动提取待办', d: '各队核对报告的待办事项自动列出，逐项跟进' },
         ],
       },
       {
-        key: 'l2', tab: 'files', title: '赛站汇总打包', hint: '切到「赛站汇总（负责人）」模式，导入各队 ZIP 与参赛费材料后打包', scrollTo: '参赛费', filesMode: 'station', show: [],
+        key: 'l2', tab: 'members', title: '核对同学名单', hint: '各队名单已自动汇总，核对补漏（缺卡号 / 重名在这里处理）',
         guide: [
-          { t: '已自动切模式', d: '本步已切到「赛站汇总（负责人）」视图' },
-          { t: '收两样', d: '各队打包的 ZIP ＋ 负责人统一收取的参赛费材料（发票 / 支付记录 / 邀请函）' },
-          { t: '自动合并', d: '各队 ZIP 自动解包，每队一个文件夹并附该队待办清单，最后打包赛站总包' },
+          { t: '自动汇总', d: '来自各队 ZIP 的名单已合并进清单，按一卡通号去重' },
+          { t: '补漏', d: '未收录的同学手动补录；确认无误后用于审批单出差人' },
         ],
       },
       {
-        key: 'l3', tab: 'approval', title: '填写差旅审批单', hint: '收齐各队名单后再定稿：出差人名单取自同学清单，起讫日期取自行程信息',
+        key: 'l3', tab: 'approval', title: '填写差旅审批单', hint: '名单定稿后填写：出差人名单取自同学清单，起讫日期取自行程信息',
         guide: [
           { t: '自动带出', d: '出差人名单取自同学清单，起讫日期取自行程信息' },
           { t: '生成 docx', d: '按学校模板生成标准 Word 文件，下载打印签字' },
-          { t: '后置原因', d: '收齐各队 ZIP 后名单可能微调，建议此时再定稿审批单' },
+          { t: '顺序说明', d: '名单以收齐各队 ZIP 后的最终版为准，故审批单放在导入与核对之后' },
         ],
       },
       {
-        key: 'l4', tab: 'report', title: '核对报告与报销流程', hint: '待办事项清零后，按「报销办理流程」四步推进',
+        key: 'l4', tab: 'files', title: '打包赛站总包', hint: '全部就绪后打包赛站总包（每队文件夹 + 参赛费 + 汇总说明）', scrollTo: '参赛费', filesMode: 'station', show: ['参赛费材料'],
+        guide: [
+          { t: '打包', d: '点「打包下载赛站汇总 ZIP」生成总包' },
+          { t: '提交', d: '按注意事项流程对接教练 / 财务' },
+        ],
+      },
+      {
+        key: 'l5', tab: 'report', title: '核对报告与报销流程', hint: '待办事项清零后，按「报销办理流程」四步推进',
         guide: [
           { t: '待办清零', d: '缺材料、归属、金额问题都汇总在报告待办里，处理完一项勾一项' },
           { t: '对外同步', d: '可打印报告，或复制群消息模板发参赛队员群' },
@@ -119,10 +125,11 @@ const doneChecks = computed(() => {
   if (wizard.role === 'leader') {
     return {
       l0: null,
-      l1: state.members.length > 0,
-      l2: null, // 打包是手动动作
+      l1: state.members.length > 0, // 导入各队 ZIP 后名单自动汇总
+      l2: state.members.length > 0,
       l3: state.approval.done === true,
-      l4: null,
+      l4: null, // 打包是手动动作
+      l5: null,
     }
   }
   const hasMaterials = pkg.legs.some((l) => l.files.length)
@@ -138,11 +145,13 @@ const doneChecks = computed(() => {
 })
 
 /* ---- 步骤卡片过滤（P1 修复版）：不改卡片内联样式 —— 给 main 挂/摘 wizard-filtering
-   class，配合 CSS 隐藏非本步卡片；退出向导 / 切换角色时摘掉 class 即全部恢复 ---- */
+   class，配合 CSS 隐藏非本步卡片；**仅在当前步骤所属页签生效**（ui.tab 门禁，
+   防止过滤泄漏到其它页签导致空白页）；退出向导 / 切换角色时摘掉 class 即全部恢复 ---- */
 function applyCardFilter() {
   const main = document.querySelector('main')
   if (!main) return
-  const active = wizard.enabled && !!wizard.role && (current.value.show?.length > 0)
+  const active =
+    wizard.enabled && !!wizard.role && (current.value.show?.length > 0) && ui.tab === current.value.tab
   main.classList.toggle('wizard-filtering', active)
   if (!active) {
     for (const card of main.querySelectorAll('.card[data-wkeep]')) card.removeAttribute('data-wkeep')
@@ -215,6 +224,12 @@ watch(
     if (wizard.enabled && wizard.role) applyStep()
   },
   { immediate: true },
+)
+
+// 页签切换 / 自由跳转时同步过滤状态（ui.tab 门禁：离开本步页签即恢复全部卡片）
+watch(
+  () => ui.tab,
+  () => applyCardFilter(),
 )
 
 /* ---- 首页「让 AI 替我做」面板 ---- */
@@ -301,10 +316,10 @@ async function copyText(t, label) {
       <li
         v-for="(s, i) in steps"
         :key="s.key"
-        :class="{ current: i === stepIndex, done: i < stepIndex }"
+        :class="{ current: i === stepIndex, done: i < stepIndex || wizard.done.includes(s.key) }"
         @click="setStep(i)"
       >
-        <span class="wiz-num">{{ i < stepIndex ? '✓' : i + 1 }}</span>{{ s.title }}
+        <span class="wiz-num">{{ i < stepIndex || wizard.done.includes(s.key) ? '✓' : i + 1 }}</span>{{ s.title }}
       </li>
     </ol>
     <div class="wiz-body">

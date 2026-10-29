@@ -18,6 +18,7 @@ import {
   buildInvoicesPdf,
 } from '../data/packaging'
 import { readZipEntries } from '../utils/unzip'
+import { parseMembersCSV } from '../utils/misc'
 import { downloadBlob, sanitizeName, isImageName } from '../utils/misc'
 import { parseTodosSection } from '../data/report'
 import { buildMergedPdf, mergeHeader } from '../utils/mergePrint'
@@ -395,6 +396,9 @@ async function addStationFiles(list) {
       // 解析该队核对报告中的待办事项
       const reportEntry = entries.find((e2) => e2.name.includes('核对报告.txt'))
       if (reportEntry) item.todos = parseTodosSection(new TextDecoder('utf-8').decode(reportEntry.data))
+      // 解析该队参赛同学清单（队长打包时自带），供负责人一键汇总名单
+      const csvEntry = entries.find((e2) => e2.name.includes('参赛同学清单.csv'))
+      if (csvEntry) item.roster = parseMembersCSV(new TextDecoder('utf-8').decode(csvEntry.data))
     } catch (err) {
       item.error = err?.message || String(err)
     }
@@ -411,6 +415,27 @@ function onPickZip(e) {
 function removeZip(it) {
   const i = stationZips.indexOf(it)
   if (i >= 0) stationZips.splice(i, 1)
+}
+
+/** 从各队 ZIP 内的参赛同学清单汇总名单（按一卡通号 / 姓名去重，剔除已在清单里的） */
+const rosterFromZips = computed(() => {
+  const seen = new Set(state.members.map((m) => m.card || m.name))
+  const out = []
+  for (const z of stationZips) {
+    for (const m of z.roster || []) {
+      const key = m.card || m.name
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      out.push(m)
+    }
+  }
+  return out
+})
+function mergeRoster() {
+  const add = rosterFromZips.value
+  if (!add.length) return showToast('各队 ZIP 里没有新的名单可汇总')
+  state.members.push(...add)
+  showToast(`已从各队 ZIP 汇总 ${add.length} 名同学到「同学清单」`)
 }
 
 async function packStation() {
@@ -802,6 +827,9 @@ async function packStation() {
         <input ref="efFileEl" type="file" multiple hidden @change="onPickEf" />
 
         <div class="btn-row" style="margin-top: 12px">
+          <button class="btn" :disabled="busy" @click="mergeRoster">
+            从各队 ZIP 汇总同学名单{{ rosterFromZips.length ? `（+${rosterFromZips.length} 人）` : '' }}
+          </button>
           <button class="btn btn-primary" :disabled="busy" @click="packStation">打包下载赛站汇总 ZIP</button>
         </div>
         <p class="hint">

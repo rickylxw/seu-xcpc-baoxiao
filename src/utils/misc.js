@@ -77,3 +77,18 @@ export function membersText(members) {
 export function isImageName(n) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(n || '')
 }
+
+/** 解析队伍 ZIP 内的「参赛同学清单.csv」（membersCSVString 生成的格式），返回 [{ name, card }] */
+export function parseMembersCSV(text) {
+  const clean = String(text || '').replace(/^\ufeff/, '')
+  const rows = clean.split(/\r?\n/).filter((r) => r.trim())
+  const out = []
+  for (const row of rows.slice(1)) {
+    // 首行是表头；单元格带引号包裹，个别卡号有防公式前缀 '
+    const cells = row.split(',').map((c) => c.replace(/^"|"$/g, '').replace(/^'/, '').trim())
+    const name = cells[0] || ''
+    const card = cells[1] || ''
+    if (name && name !== '姓名') out.push({ name, card })
+  }
+  return out
+}
