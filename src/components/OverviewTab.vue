@@ -16,13 +16,6 @@ async function copyTax() {
   await copyText(TAX_TEXT)
   showToast('抬头与税号已复制')
 }
-
-/** 进入对应角色的分步向导 */
-function startWizard(role) {
-  state.wizard.enabled = true
-  state.wizard.role = role
-  state.wizard.step = 0
-}
 </script>
 
 <template>
@@ -63,12 +56,6 @@ function startWizard(role) {
       <p class="hint" style="margin: 12px 0 0">
         常见漏项：酒店流水、机票订单、行程单、参赛费支付记录；购票勿勾选保险；住宿发票盖章单位需与支付收款方一致（不一致找酒店开证明）。
       </p>
-      <div class="qs-btns" style="margin-top: 10px">
-        <span class="hint" style="margin: 0">按向导一步步来：</span>
-        <button type="button" class="btn btn-sm" @click="startWizard('member')">队员向导</button>
-        <button type="button" class="btn btn-sm" @click="startWizard('captain')">队长向导</button>
-        <button type="button" class="btn btn-sm" @click="startWizard('leader')">负责人向导</button>
-      </div>
     </div>
     <div class="grid-2">
       <div class="card">

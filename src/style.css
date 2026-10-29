@@ -591,3 +591,16 @@ footer .foot-meta a:hover { text-decoration: underline; }
 .wiz-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13.5px; }
 .wiz-ok { color: var(--green); font-size: 13px; }
 .wiz-todo { color: var(--amber); font-size: 13px; }
+
+/* 角色选择瓦片（完全向导模式首屏） */
+.wiz-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 6px; }
+.wiz-tile {
+  appearance: none; cursor: pointer; font: inherit; text-align: left;
+  display: flex; flex-direction: column; gap: 8px;
+  border: 1.5px solid var(--line-strong); border-radius: 8px; background: #fff;
+  padding: 18px 16px; transition: all 0.15s;
+}
+.wiz-tile:hover { border-color: var(--primary); background: var(--primary-bg); transform: translateY(-2px); }
+.wiz-tile b { font-size: 16px; color: var(--primary-ink); }
+.wiz-tile span { font-size: 13px; color: var(--muted); line-height: 1.6; }
+@media (max-width: 800px) { .wiz-tiles { grid-template-columns: 1fr; } }

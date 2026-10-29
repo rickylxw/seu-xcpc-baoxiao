@@ -1,10 +1,14 @@
 <script setup>
-/* 分步向导壳：不重写页签内容，按角色编排现有页签为步骤，驱动 ui.tab + 滚动定位 */
+/* 完全向导模式：默认入口。未选角色时显示角色选择瓦片；选后按角色走分步步骤条 */
 import { computed, watch } from 'vue'
 import { state, pkg, ui } from '../store'
 import { missingRequired, coverageGaps, payCheckIssues } from '../data/packaging'
 
-const ROLES = { member: '队员', captain: '队长', leader: '报销负责人' }
+const ROLES = {
+  member: { name: '队员', desc: '保存好材料交给队长，不用管打包的事' },
+  captain: { name: '队长', desc: '统一支付并收齐本队材料，导入核对后打包上交' },
+  leader: { name: '报销负责人', desc: '收各队 ZIP，录名单、填审批单、赛站汇总并跑流程' },
+}
 
 const steps = computed(() => {
   if (state.wizard.role === 'member') {
@@ -55,6 +59,14 @@ function applyStep() {
   })
 }
 
+function chooseRole(role) {
+  state.wizard.role = role
+  state.wizard.step = 0
+  applyStep()
+}
+function rechoose() {
+  state.wizard.role = ''
+}
 function setStep(i) {
   state.wizard.step = i
   applyStep()
@@ -71,17 +83,43 @@ function exitWizard() {
 
 watch(
   () => [state.wizard.enabled, state.wizard.role],
-  ([on]) => {
-    if (on) applyStep()
+  ([on, role]) => {
+    if (on && role) applyStep()
   },
   { immediate: true },
 )
 </script>
 
 <template>
-  <div class="wizard-bar no-print">
+  <!-- 未选角色：角色选择瓦片 -->
+  <div v-if="!state.wizard.role" class="card wiz-choose no-print">
+    <h2>开始整理报销材料</h2>
+    <p class="hint">选择你的角色，进入对应的分步向导，照着步骤走就能完成。选错了随时能在向导顶部切换。</p>
+    <div class="wiz-tiles">
+      <button type="button" class="wiz-tile" @click="chooseRole('member')">
+        <b>我是队员</b>
+        <span>{{ ROLES.member.desc }}</span>
+      </button>
+      <button type="button" class="wiz-tile" @click="chooseRole('captain')">
+        <b>我是队长</b>
+        <span>{{ ROLES.captain.desc }}</span>
+      </button>
+      <button type="button" class="wiz-tile" @click="chooseRole('leader')">
+        <b>我是报销负责人</b>
+        <span>{{ ROLES.leader.desc }}</span>
+      </button>
+    </div>
+    <p class="hint" style="margin: 12px 0 0">
+      更熟悉本工具的同学可以
+      <a href="javascript:;" @click="exitWizard">退出向导使用自由模式</a>。
+    </p>
+  </div>
+
+  <!-- 已选角色：分步步骤条 -->
+  <div v-else class="wizard-bar no-print">
     <div class="wiz-head">
-      <span class="wiz-title">向导模式 · {{ ROLES[state.wizard.role] || '队长' }}</span>
+      <span class="wiz-title">向导模式 · {{ ROLES[state.wizard.role]?.name || '队长' }}</span>
+      <button type="button" class="btn btn-sm" @click="rechoose">切换角色</button>
       <button type="button" class="btn btn-sm" @click="exitWizard">退出向导（自由模式）</button>
     </div>
     <ol class="wiz-steps">

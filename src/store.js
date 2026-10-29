@@ -30,7 +30,7 @@ export function defaultState() {
     teamName: '',
     members: [], // { name, card }
     flow: [false, false, false, false],
-    wizard: { enabled: false, role: 'captain', step: 0 }, // 分步向导：enabled 开启后隐藏自由导航，按角色走步骤
+    wizard: { enabled: true, role: '', step: 0 }, // 完全向导模式：默认开启；role 为空显示角色选择页，选后按角色走步骤
     serverOcr: {
       enabled: true, // 启用后图片/扫描件改走服务端视觉模型识别（默认同源 /v1，由部署侧 server.js 代理到其本机 Ollama）
       baseUrl: '/v1', // 同源代理（server.js）；也可改为任意 OpenAI 兼容接口或 Ollama 地址
