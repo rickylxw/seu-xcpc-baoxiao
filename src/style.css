@@ -605,3 +605,17 @@ footer .foot-meta a:hover { text-decoration: underline; }
 .wiz-tile b { font-size: 16px; color: var(--primary-ink); }
 .wiz-tile span { font-size: 13px; color: var(--muted); line-height: 1.6; }
 @media (max-width: 800px) { .wiz-tiles { grid-template-columns: 1fr; } }
+
+/* 首页「让 AI 替我做」瓦片与面板 */
+.wiz-tile-ai { border-style: dashed; border-color: var(--primary-border); }
+.wiz-tile-ai:hover { background: var(--primary-bg); }
+.wiz-ai-panel {
+  margin-top: 12px; padding: 12px 14px;
+  border: 1px dashed var(--primary-border); border-radius: 8px; background: var(--primary-bg);
+}
+.wiz-ai-panel .ai-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 4px; font-size: 13px; color: var(--ink); }
+.wiz-ai-panel .ai-code {
+  width: 100%; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 6px;
+  padding: 8px 10px; font-size: 12.5px; font-family: Consolas, Monaco, monospace;
+  color: var(--ink); background: #fff; resize: vertical; white-space: pre;
+}
