@@ -1,14 +1,14 @@
 <script setup>
 import { ref } from 'vue'
-import { state, resetAll, exportData, importDataFile } from '../store'
+import { state, wizard, resetAll, exportData, importDataFile } from '../store'
 
 const fileEl = ref(null)
 
 /** 从自由模式回到分步向导（回到角色选择，可换角色） */
 function enterWizard() {
-  state.wizard.enabled = true
-  state.wizard.role = ''
-  state.wizard.step = 0
+  wizard.enabled = true
+  wizard.role = ''
+  wizard.step = 0
 }
 
 function onReset() {
@@ -33,8 +33,8 @@ async function onImport(e) {
       </div>
       <div class="topbar-actions">
         <button
-          v-if="!state.wizard.enabled"
-          class="btn btn-sm"
+          v-if="!wizard.enabled"
+          class="btn btn-sm btn-primary"
           title="按角色分步引导整理报销材料"
           @click="enterWizard"
         >
