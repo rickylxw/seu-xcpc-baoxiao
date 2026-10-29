@@ -7,95 +7,18 @@ import { membersCSVString, sanitizeName } from '../utils/misc'
 import { buildApprovalDocxBlob, buildPayCheckDocxBlob } from './approval'
 import { PDFDocument } from 'pdf-lib'
 import { reportText, parseTodosSection } from './report'
+// 纯逻辑核心（分组/槽位/分类/检查）已抽到 core.js —— 服务器零依赖场景复用；此处转发并保留原导出面
+import * as Core from './core'
 
-/** 打包分组：往返交通 / 赛站住宿（参赛费材料归赛站汇总负责人统一收取，见 buildStationZipBlob） */
-export const GROUPS = [
-  { id: 'transport', name: '往返交通', types: ['flight', 'train', 'local'] },
-  { id: 'stay', name: '赛站住宿', types: ['hotel'] },
-]
+export const GROUPS = Core.GROUPS
+export const TYPE_META = Core.TYPE_META
+export const slotsOf = Core.slotsOf
+export const SCOPE_OPTIONS = Core.SCOPE_OPTIONS
+export const scopeLabelOf = Core.scopeLabelOf
+export const classifyMaterial = Core.classifyMaterial
+export const safeRel = Core.safeRel
 
-/** 每种行程类型的材料槽位（依据注意事项的材料要求） */
-export const TYPE_META = {
-  entryfee: {
-    label: '参赛费',
-    ph: '',
-    slots: [
-      { id: 'invite', name: '邀请函', required: true, note: '打印件扫描' },
-      { id: 'fee_invoice', name: '参赛费发票', required: true, note: '一般发送至教练邮箱；抬头「东南大学」' },
-      { id: 'fee_pay', name: '参赛费支付记录', required: true, note: '与发票金额核对一致' },
-    ],
-  },
-  flight: {
-    label: '飞机',
-    ph: '如：10.24 MU2801 南京—长春',
-    slots: [
-      { id: 'f_invoice', name: '机票发票', required: true, note: '抬头「东南大学」' },
-      { id: 'f_pay', name: '机票支付记录', required: true, note: '必附打印件，与发票金额核对；购票勿勾选保险等附加服务，避免金额不一致' },
-      { id: 'f_order', name: '机票订单记录', required: false, note: '需显示「经济舱」；若发票已显示姓名、起止地点和「经济舱」可免附' },
-    ],
-  },
-  train: {
-    label: '高铁',
-    ph: '如：10.24 G1234 南京南—长春',
-    slots: [
-      { id: 't_voucher', name: '车票报销凭证', required: true, note: '打印报销凭证即可，无需支付/预订记录；仅限二等座；购票勿勾选保险等附加服务' },
-    ],
-  },
-  local: {
-    label: '市内交通',
-    ph: '如：10.24 市内地铁/打车',
-    slots: [
-      { id: 'l_invoice', name: '发票', required: true },
-      { id: 'l_pay', name: '支付记录', required: true },
-    ],
-  },
-  hotel: {
-    label: '住宿',
-    ph: '如：10.24–10.26 ××酒店',
-    slots: [
-      { id: 'h_invoice', name: '住宿发票', required: true, note: '尽量含入住人、入住和离店时间' },
-      { id: 'h_pay', name: '住宿支付记录（或 POS 单）', required: true, note: '与发票金额核对；开票盖章单位需与支付对象一致（不一致可请酒店开具证明）' },
-      { id: 'h_flow', name: '住宿流水记录', required: true, note: '酒店前台开具并盖章' },
-    ],
-  },
-}
-
-export const slotsOf = (type) => (TYPE_META[type] || TYPE_META.entryfee).slots
-
-/**
- * 按文件名（及其所在文件夹路径，如「…/酒店/xxx.pdf」）猜测材料归属（批量导入自动分类用）。
- * 返回 { groupId, type, slotId, scopeHint } 或 null（无法判断，导入预览里默认「不导入」）。
- * scopeHint：文件名明确写「去程 / 返程」时给出，优先级高于识别文本的起讫地判断。
- */
-export function classifyMaterial(name, path = '') {
-  const n = `${String(name || '')} ${String(path || '')}`
-  const has = (...words) => words.some((w) => n.includes(w))
-  // 「行程单」视为发票类（航空运输电子客票行程单可作报销凭证；12306 行程单已被下方火车分支优先拦下）
-  const inv = has('发票', '开票', '行程单')
-  const pay = has('支付', '付款', '账单', '扣款')
-  const scopeHint = has('去程') ? ['outbound'] : has('返程', '回程') ? ['return'] : null
-  if (has('邀请函')) return { groupId: 'entryfee', type: 'entryfee', slotId: 'invite', scopeHint: null }
-  if (has('报名费', '参赛费', '注册费', '赛站')) {
-    return { groupId: 'entryfee', type: 'entryfee', slotId: pay ? 'fee_pay' : 'fee_invoice', scopeHint: null }
-  }
-  if (has('酒店', '住宿', '宾馆', '民宿', '水单')) {
-    const slotId = inv ? 'h_invoice' : has('流水', '水单') ? 'h_flow' : 'h_pay'
-    return { groupId: 'stay', type: 'hotel', slotId, scopeHint: null }
-  }
-  // 火车类关键词优先于「行程单」（12306 行程单也含「行程单」字样）
-  if (has('火车', '高铁', '动车', '铁路', '12306', '车票')) {
-    return { groupId: 'transport', type: 'train', slotId: 't_voucher', scopeHint }
-  }
-  if (has('机票', '航空', '航班', '客票', '行程单', '登机', '值机')) {
-    const slotId = inv ? 'f_invoice' : pay ? 'f_pay' : 'f_order'
-    return { groupId: 'transport', type: 'flight', slotId, scopeHint }
-  }
-  if (has('出租', '滴滴', '网约车', '打车', '高德', '地铁', '公交', '市内')) {
-    return { groupId: 'transport', type: 'local', slotId: inv ? 'l_invoice' : 'l_pay', scopeHint }
-  }
-  // 类型判不出但范围词命中：只携带范围提示（导入预览仍默认「不导入」，手动改类型后范围自动生效）
-  return scopeHint ? { groupId: null, type: null, slotId: null, scopeHint } : null
-}
+/** 打包分组与材料槽位的定义在 core.js（此处转发，见文件头部说明） */
 
 /** 预设槽位 + 该段的自定义材料项（自定义项不参与必附检查） */
 export function allSlotsOf(leg) {
@@ -116,116 +39,33 @@ export function memberNamesOfIdx(memberIdx) {
   return { all: false, names: memberIdx.map((i) => state.members[i]?.name).filter(Boolean) }
 }
 
-/** 往返交通材料的适用范围勾选项 */
-export const SCOPE_OPTIONS = [
-  { id: 'outbound', name: '去程' },
-  { id: 'return', name: '返程' },
-]
-
-export const scopeLabelOf = (groups) => {
-  const labels = SCOPE_OPTIONS.filter((s) => groups.includes(s.id)).map((s) => s.name)
-  return labels.length === SCOPE_OPTIONS.length ? '去程返程' : labels.join('') || '未标注'
-}
-
-/**
- * 每位队员的材料归属进度：
- * 往返交通：去程、返程各至少有一份归属到该队员的材料（文件的适用范围勾选 + 归属队员决定）；
- * 住宿发票：至少有一份归属到该队员、且材料类别为「住宿发票」的文件。
- */
+/** 每位队员的材料归属进度（核心实现见 core.memberCoverageCore） */
 export function memberCoverage() {
-  const transport = pkg.legs.filter((l) => l.group === 'transport')
-  const stay = pkg.legs.filter((l) => l.group === 'stay')
-  const covers = (f, i) => f.members == null || (f.members || []).includes(i)
-  const hasFile = (legs, i, pred) =>
-    legs.some((l) => (l.files || []).some((f) => covers(f, i) && pred(f)))
-  return state.members.map((m, i) => ({
-    idx: i,
-    name: m.name || `成员${i + 1}`,
-    card: m.card,
-    outbound: hasFile(transport, i, (f) => (f.scope || []).includes('outbound')),
-    back: hasFile(transport, i, (f) => (f.scope || []).includes('return')),
-    invoice: hasFile(stay, i, (f) => f.slot === 'h_invoice'),
-  }))
+  return Core.memberCoverageCore(state, pkg)
 }
 
 /** 归属不完整的队员清单，如 [{ name: '李四', miss: ['去程', '住宿发票'] }] */
 export function coverageGaps() {
-  const gaps = []
-  for (const c of memberCoverage()) {
-    const miss = []
-    if (!c.outbound) miss.push('去程')
-    if (!c.back) miss.push('返程')
-    if (!c.invoice) miss.push('住宿发票')
-    if (miss.length) gaps.push({ name: c.name, miss })
-  }
-  return gaps
+  return Core.coverageGapsCore(state, pkg)
 }
 
 /**
  * 机票舱位检查：机票发票 / 机票订单记录需含「经济舱」字样（飞机仅限经济舱）。
  * 返回 { issues: [{name, group}], checked }
  */
+/** 舱位检查汇总（核心实现见 core.cabinIssuesCore） */
 export function cabinIssues() {
-  const issues = []
-  let checked = 0
-  for (const leg of pkg.legs) {
-    if (leg.group !== 'transport') continue
-    const g = GROUPS.find((x) => x.id === leg.group)
-    for (const f of leg.files) {
-      if (f.slot !== 'f_invoice' && f.slot !== 'f_order') continue
-      const m = f.meta
-      if (!m || !m.cabin || typeof m.cabin.ok !== 'boolean') continue
-      checked++
-      if (!m.cabin.ok) {
-        issues.push({ name: f.file.name, group: g ? g.name : '' })
-      }
-    }
-  }
-  return { issues, checked }
+  return Core.cabinIssuesCore(pkg)
 }
 
-const parseAmount = (v) => {
-  const n = parseFloat(String(v ?? '').replace(/[^\d.]/g, ''))
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null
-}
+const parseAmount = Core.parseAmount
 
 /**
  * 金额一致性检查（按注意事项通用要求：支付金额合计必须与发票金额一致）。
  * 返回各分组 { group, name, invSum, paySum, match: true|false|null(缺一边), invCount, payCount }
  */
 export function amountCheck() {
-  const out = []
-  for (const g of GROUPS) {
-    const legs = pkg.legs.filter((l) => l.group === g.id)
-    let invSum = 0
-    let paySum = 0
-    let invCount = 0
-    let payCount = 0
-    for (const leg of legs) {
-      for (const f of leg.files) {
-        const v = parseAmount(f.amount)
-        if (v == null) continue
-        if (f.slot === 'f_invoice' || f.slot === 'h_invoice') {
-          invSum += v
-          invCount++
-        } else if (f.slot === 'f_pay' || f.slot === 'h_pay') {
-          paySum += v
-          payCount++
-        }
-      }
-    }
-    if (!invCount && !payCount) continue
-    out.push({
-      group: g.id,
-      name: g.name,
-      invSum: Math.round(invSum * 100) / 100,
-      paySum: Math.round(paySum * 100) / 100,
-      invCount,
-      payCount,
-      match: invCount && payCount ? Math.round(invSum * 100) === Math.round(paySum * 100) : null,
-    })
-  }
-  return out
+  return Core.amountCheckCore(state, pkg)
 }
 
 /**
@@ -312,46 +152,18 @@ export async function buildInvoicesPdf() {
 }
 
 /** 发票抬头检查：已检查张数与未含「东南大学」抬头的存疑清单 */
+/** 发票抬头检查汇总（核心实现见 core.invoiceHeaderIssuesCore） */
 export function invoiceHeaderIssues() {
-  const issues = []
-  let checked = 0
-  for (const leg of pkg.legs) {
-    for (const f of leg.files) {
-      const m = f.meta
-      if (!m || !m.header || typeof m.header.ok !== 'boolean') continue
-      checked++
-      if (!m.header.ok) {
-        const g = GROUPS.find((x) => x.id === leg.group)
-        issues.push({ name: f.file.name, group: g ? g.name : '' })
-      }
-    }
-  }
-  return { issues, checked }
+  return Core.invoiceHeaderIssuesCore(pkg)
 }
 
-/** 尚未上传的必附材料（自定义材料项不参与必附检查） */
+/** 尚未上传的必附材料（自定义材料项不参与必附检查；核心实现见 core.missingRequiredCore） */
 export function missingRequired() {
-  const out = []
-  for (const leg of pkg.legs) {
-    for (const slot of slotsOf(leg.type)) {
-      if (!slot.required) continue
-      if (!leg.files.some((f) => f.slot === slot.id)) out.push({ leg, slot })
-    }
-  }
-  return out
+  return Core.missingRequiredCore(state, pkg)
 }
 
 export function teamFolderName() {
   return sanitizeName(`${state.meta.contest || 'XCPC'}-${state.teamName || '未命名队'}-报销材料`)
-}
-
-/** 外部 ZIP 条目路径净化：防 zip-slip（剥掉 ../、绝对路径与反斜杠），只保留安全相对路径 */
-export function safeRel(path) {
-  return String(path)
-    .replace(/\\/g, '/')
-    .split('/')
-    .filter((seg) => seg && seg !== '.' && seg !== '..' && !/^[a-zA-Z]:$/.test(seg))
-    .join('/')
 }
 
 /**
@@ -476,30 +288,9 @@ ${memberLines}
 
 
 /** 收付款核对未通过的行程段（填了信息且未勾「核对一致」），用于生成官方模板的情况说明书 docx */
+/** 收付款核对未通过的行程段（核心实现见 core.payCheckIssuesCore） */
 export function payCheckIssues() {
-  const CONTENT_LABEL = { hotel: '住宿费', flight: '机票款', train: '火车票款', local: '交通费' }
-  const out = []
-  for (const g of GROUPS) {
-    for (const leg of pkg.legs.filter((l) => l.group === g.id)) {
-      const pc = leg.payCheck
-      if (!pc || (!pc.issuer && !pc.payee) || pc.consistent) continue
-      const invSlotIds = (TYPE_META[leg.type] || TYPE_META.entryfee).slots
-        .filter((s) => /发票/.test(s.name))
-        .map((s) => s.id)
-      const invFiles = invSlotIds.length ? leg.files.filter((f) => invSlotIds.includes(f.slot)) : []
-      const amounts = invFiles.map((f) => parseAmount(f.amount)).filter((v) => v != null)
-      out.push({
-        name: `${TYPE_META[leg.type] ? TYPE_META[leg.type].label : ''}${leg.label ? ' ' + leg.label : ''}`,
-        contentLabel: CONTENT_LABEL[leg.type] || '',
-        invSum: invFiles.length && amounts.length === invFiles.length ? Math.round(amounts.reduce((a, b) => a + b, 0) * 100) / 100 : null,
-        issuer: pc.issuer || '（未识别/未填写）',
-        payee: pc.payee || '（未识别/未填写）',
-        note: (pc.note || '').trim(),
-        filled: !!(pc.note || '').trim(),
-      })
-    }
-  }
-  return out
+  return Core.payCheckIssuesCore(pkg)
 }
 
 /**

@@ -100,109 +100,25 @@ export async function extractOfdTextItems(file) {
   return out
 }
 
-/** 从文本里识别金额候选（¥/￥/元，以及 金额/合计/实付 等关键词后的数字），按金额降序，最多 3 个 */
-export function detectAmounts(text) {
-  if (!text) return []
-  // OCR 文本常在字符间插入空格（如「金 额 : ¥1216.50」），先去空白再匹配
-  const norm = text.replace(/\s+/g, '')
-  const found = new Set()
-  const re1 = /(￥|¥)\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)|([0-9]+(?:\.[0-9]{1,2})?)\s*元/g
-  let m
-  while ((m = re1.exec(norm))) {
-    const n = (m[2] || m[3]).replace(/,/g, '')
-    const v = parseFloat(n)
-    if (Number.isFinite(v) && v > 0) found.add(v)
-  }
-  const re2 = /(?:金额|合计|实付|总价|总额)[^\d]{0,4}([0-9]+(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)/g
-  while ((m = re2.exec(norm))) {
-    const v = parseFloat(m[1].replace(/,/g, ''))
-    if (Number.isFinite(v) && v > 0) found.add(v)
-  }
-  return [...found].sort((a, b) => b - a).slice(0, 3).map((v) => '¥' + v.toFixed(2))
-}
-
-/** 从文本里匹配同学清单中的姓名（忽略空白，兼容 OCR 插空） */
-export function detectMembers(text, members) {
-  if (!text) return []
-  const norm = text.replace(/\s+/g, '')
-  return members
-    .map((m, i) => ({ i, name: m.name }))
-    .filter((m) => m.name && norm.includes(m.name))
-}
+/** 从文本里识别金额候选与同学归属：实现已抽到 core.js（见下方 import） */
 
 const isImageFile = (name) => /\.(jpe?g|png|gif|webp|bmp)$/i.test(name)
 
-const SCHOOL = '东南大学'
-const TAX_ID = '12100000466006770Q'
+// 纯检查/提取函数（detect*/抬头/舱位/起讫地等）已抽到 core.js（服务器零依赖复用）
+import {
+  detectAmounts,
+  detectMembers,
+  INVOICE_HEADER_SLOTS,
+  PAY_PARTY_SLOTS,
+  SCOPE_TRANSPORT_SLOTS,
+  invoiceHeaderCheck,
+  cabinCheck,
+  trainSeatCheck,
+  extractParty,
+  routeScopeCheck,
+} from '../data/core.js'
 
-/** 需要做发票抬头检查的槽位（支付记录、行程单、车票凭证等一律不查抬头） */
-export const INVOICE_HEADER_SLOTS = ['f_invoice', 'h_invoice', 'l_invoice', 'fee_invoice']
-
-/**
- * 发票抬头检查：仅对发票类槽位（名称含「发票」）生效，检查是否含「东南大学」或税号。
- * 支付记录即使截图文字里出现「发票」字样也不查。返回 { ok } 或 null（不适用/无法判断）。
- */
-export function invoiceHeaderCheck(slotId, slotName, fileName, text) {
-  if (!INVOICE_HEADER_SLOTS.includes(slotId)) return null
-  const norm = (text || '').replace(/\s+/g, '')
-  const hay = `${slotName || ''} ${fileName || ''} ${norm}`
-  if (!/发票/.test(hay)) return null
-  if (norm.length < 10) return null
-  return { ok: norm.includes(SCHOOL) || norm.includes(TAX_ID) }
-}
-
-/**
- * 机票舱位检查：机票发票 / 机票订单记录（行程单）需显示「经济舱」字样（飞机仅限经济舱）。
- * 返回 { ok } 或 null（不适用/文字太少无法判断）。
- */
-export function cabinCheck(slotId, text) {
-  if (slotId !== 'f_invoice' && slotId !== 'f_order') return null
-  const norm = (text || '').replace(/\s+/g, '')
-  if (norm.length < 10) return null
-  return { ok: norm.includes('经济舱') }
-}
-
-/** 火车票软检查：座位信息常为图片，识别到「二等座」时显示确认（不强制） */
-export function trainSeatCheck(slotId, text) {
-  if (slotId !== 't_voucher') return null
-  const norm = (text || '').replace(/\s+/g, '')
-  if (!norm) return null
-  return norm.includes('二等座') ? { ok: true } : null
-}
-
-/** 支付类槽位（做收款方提取，供收付款核对） */
-const PAY_PARTY_SLOTS = ['f_pay', 'h_pay', 'l_pay', 'fee_pay']
-
-/**
- * 从识别文本提取单位名（「××公司/酒店/银行」等形式），labels 为候选标签。
- * 只认「标签 + 单位后缀」的严格形式；匹配不到就返回空（自动填入宁缺勿错，可手填）。
- */
-export function extractParty(text, labels) {
-  const norm = String(text || '').replace(/\s+/g, '')
-  if (!norm) return ''
-  for (const label of labels) {
-    const m = norm.match(
-      new RegExp(`${label}[名称：:]{0,3}([^，。；;、|\\d]{2,28}?(?:公司|银行|酒店|饭店|宾馆|商行|集团|中心|事务所|门市部))`),
-    )
-    if (m && m[1]) return m[1]
-  }
-  return ''
-}
-
-/** 识别完成后提取发票开票方（发票槽位）与支付收款方（支付槽位），写入 meta 供收付款核对预填 */
-function applyParty(fileObj, text) {
-  if (INVOICE_HEADER_SLOTS.includes(fileObj.slot)) {
-    const issuer = extractParty(text, ['销售方', '开票方', '开票单位', '卖方', '开票人'])
-    if (issuer) fileObj.meta.issuer = issuer
-  }
-  if (PAY_PARTY_SLOTS.includes(fileObj.slot)) {
-    const payee = extractParty(text, ['收款方', '收款单位', '收款人', '商户', '对方'])
-    if (payee) fileObj.meta.payee = payee
-  }
-}
-
-/** 往返交通材料的槽位（可按起讫地自动勾选去程 / 返程） */
-const SCOPE_TRANSPORT_SLOTS = ['f_invoice', 'f_pay', 'f_order', 't_voucher']
+export { detectAmounts, detectMembers, extractParty, routeScopeCheck }
 
 /** 从「所到省份、城市」（如「吉林省 长春市」）取出城市名，用于起讫地匹配 */
 function destCityOf() {
@@ -210,40 +126,6 @@ function destCityOf() {
   if (!place) return ''
   const last = place.split(/[\s,，、/]+/).filter(Boolean).pop() || ''
   return last.replace(/(市|地区|自治州|盟|旗)$/, '') || last
-}
-
-/**
- * 按 OCR 文本里的起讫地判断去程 / 返程：
- * 只认真实路线分隔符（→、-、至、到、飞往、抵达…），在其两侧 24 字窗口内找出发/到达
- * 城市名；无分隔符命中时返回 null（宁可不自动勾选，也不凭城市共现瞎猜方向）。
- * 返回 { scope: 'outbound'|'return'|'both', label } 或 null（无法判断/未配置城市）。
- */
-export function routeScopeCheck(text, homeCity, destCity) {
-  const home = String(homeCity || '').trim()
-  const dest = String(destCity || '').trim()
-  if (!home || !dest) return null
-  const norm = String(text || '').replace(/\s+/g, '')
-  if (norm.length < 4) return null
-  let out = false
-  let back = false
-  const seps = [...norm.matchAll(/[→⇒➔➤↦\-–—~～]|至|到|飞往|飞抵|抵达|返回|出发/g)].map((m) => m.index)
-  for (const p of seps) {
-    const left = norm.slice(Math.max(0, p - 24), p)
-    const right = norm.slice(p + 1, p + 25)
-    if (left.includes(home) && right.includes(dest)) out = true
-    if (left.includes(dest) && right.includes(home)) back = true
-  }
-  if (out && back) return { scope: 'both', label: `${home}⇄${dest}` }
-  if (out) return { scope: 'outbound', label: `${home}→${dest}` }
-  if (back) return { scope: 'return', label: `${dest}→${home}` }
-  // 兜底：行程单 / 表格版式没有分隔符（如 OFD「南京 禄口 … 18:30 … 长春 龙嘉」列序），
-  // 两城紧邻（48 字内）共现时按先出现者为出发地；相距远视为无关提及，不猜。
-  const h = norm.indexOf(home)
-  const d = norm.indexOf(dest)
-  if (h !== -1 && d !== -1 && Math.abs(h - d) <= 48) {
-    return h < d ? { scope: 'outbound', label: `${home}→${dest}` } : { scope: 'return', label: `${dest}→${home}` }
-  }
-  return null
 }
 
 /** 识别完成后按起讫地自动勾选去程 / 返程（仅往返交通材料；结果记入 meta.scopeAuto 供界面展示） */
