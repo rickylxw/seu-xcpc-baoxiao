@@ -629,3 +629,20 @@ footer .foot-meta a:hover { text-decoration: underline; }
 }
 .mem-mat b { font-size: 14px; color: var(--primary-ink); }
 .mem-mat span { font-size: 13px; color: var(--ink); line-height: 1.6; }
+
+/* 向导步骤指引卡（队长 / 负责人每步的「怎么做」要点） */
+.wiz-guide { margin-top: 14px; }
+.wiz-guide h2::after { content: ''; }
+.wiz-guide-list { margin: 4px 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; counter-reset: gstep; }
+.wiz-guide-list li {
+  counter-increment: gstep; display: flex; align-items: baseline; gap: 10px;
+  font-size: 14px; color: var(--ink); line-height: 1.6;
+}
+.wiz-guide-list li::before {
+  content: counter(gstep); flex: 0 0 auto;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--primary-bg); color: var(--primary-dark);
+  font-size: 13px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.wiz-guide-list b { color: var(--primary-ink); margin-right: 6px; }
