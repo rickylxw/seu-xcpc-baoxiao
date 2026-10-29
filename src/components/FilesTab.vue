@@ -491,14 +491,14 @@ async function packStation() {
           返程」会直接勾好，导入后自动识别金额、归属队员与起讫地。分类不对的可在下拉框里改，识别不出类别的默认「不导入」。
         </p>
         <div class="btn-row" style="margin: 0 0 8px">
-          <button type="button" class="btn" @click="impEl.click()">📂 选择材料文件</button>
-          <button type="button" class="btn" @click="impDirEl.click()">📁 选择材料文件夹</button>
+          <button type="button" class="btn" @click="impEl.click()">选择材料文件</button>
+          <button type="button" class="btn" @click="impDirEl.click()">选择材料文件夹</button>
           <span v-if="impList.length" class="hint" style="margin: 0">已选 {{ impList.length }} 个</span>
           <span style="flex: 1"></span>
           <template v-if="impList.length">
             <button type="button" class="btn" @click="impList.splice(0)">取消</button>
             <button type="button" class="btn btn-primary" :disabled="impBusy" @click="applyImport">
-              ✓ 确认导入
+              确认导入
             </button>
           </template>
         </div>
@@ -617,9 +617,9 @@ async function packStation() {
         <div class="row-between">
           <h2>合并与打包</h2>
           <div class="btn-row" style="margin: 0">
-            <button class="btn" :disabled="invoicesBusy" @click="downloadInvoices">🧾 发票汇总 PDF（便捷扫描）</button>
-            <button class="btn" :disabled="mergeBusy" @click="openMerge">🧾 合并为一个 PDF</button>
-            <button class="btn btn-primary" :disabled="busy" @click="packTeam">📦 打包下载队伍 ZIP</button>
+            <button class="btn" :disabled="invoicesBusy" @click="downloadInvoices">发票汇总 PDF（便捷扫描）</button>
+            <button class="btn" :disabled="mergeBusy" @click="openMerge">合并为一个 PDF</button>
+            <button class="btn btn-primary" :disabled="busy" @click="packTeam">打包下载队伍 ZIP</button>
           </div>
           <p class="hint" style="margin: 0 0 8px">
             「发票汇总 PDF」只含发票/报销凭证（按清单顺序合并成一份文档），适合整体扫描或打印后随材料提交。
@@ -635,11 +635,11 @@ async function packStation() {
           尚有 {{ missing.length }} 项必附材料未上传：{{ missingText.join('；') }}。
         </div>
         <div v-if="headerInfo.issues.length" class="notice red">
-          ⚠ 有 {{ headerInfo.issues.length }} 张发票未识别到「东南大学」抬头（{{ headerText }}）。发票抬头必须为「东南大学」+ 税号
+          有 {{ headerInfo.issues.length }} 张发票未识别到「东南大学」抬头（{{ headerText }}）。发票抬头必须为「东南大学」+ 税号
           12100000466006770Q，请人工核对该发票，错误抬头无法报销。
         </div>
         <div v-if="cabinInfo.issues.length" class="notice red">
-          ⚠ 有 {{ cabinInfo.issues.length }} 张机票材料未识别到「经济舱」字样（{{ cabinText }}）。飞机仅限经济舱，请人工核对。
+          有 {{ cabinInfo.issues.length }} 张机票材料未识别到「经济舱」字样（{{ cabinText }}）。飞机仅限经济舱，请人工核对。
         </div>
         <div
           v-for="a in amountRows"
@@ -651,7 +651,7 @@ async function packStation() {
           <b>{{ a.name }}</b>：发票 {{ a.invCount }} 张合计 <b>¥{{ a.invSum.toFixed(2) }}</b>，支付
           {{ a.payCount }} 笔合计 <b>¥{{ a.paySum.toFixed(2) }}</b>
           <template v-if="a.match === true">—— 一致 ✓</template>
-          <template v-else-if="a.match === false">—— <b>不一致 ⚠</b>（通用要求：支付金额合计必须与发票金额一致）</template>
+          <template v-else-if="a.match === false">—— <b>不一致</b>（通用要求：支付金额合计必须与发票金额一致）</template>
           <template v-else>—— 金额待填写（在上方对应文件的金额框中填写）</template>
         </div>
       </div>
@@ -664,7 +664,7 @@ async function packStation() {
             {{ mergeDoc.fileCount }} 个文件 → {{ mergeDoc.pageCount }} 页
           </span>
           <span style="flex: 1"></span>
-          <button class="btn btn-primary" @click="downloadMerged">⬇️ 下载合并 PDF</button>
+          <button class="btn btn-primary" @click="downloadMerged">下载合并 PDF</button>
           <button class="btn" @click="mergeOpen = false">关闭</button>
         </div>
         <div v-if="mergeBusy" class="empty" style="margin: 40px">正在按顺序合并材料…</div>
@@ -681,7 +681,7 @@ async function packStation() {
             {{ mergeDoc.skipped.map((s) => `${s.label}：${s.reason}`).join('；') }} ），请单独打印后再附上。
           </div>
 
-          <p class="hint">点击「⬇️ 下载合并 PDF」后，用浏览器或 PDF 阅读器打开即可打印（共 {{ mergeDoc.pageCount }} 页）。合并顺序如下：</p>
+          <p class="hint">点击「下载合并 PDF」后，用浏览器或 PDF 阅读器打开即可打印（共 {{ mergeDoc.pageCount }} 页）。合并顺序如下：</p>
           <table class="tbl">
             <thead>
               <tr>
@@ -798,7 +798,7 @@ async function packStation() {
         <input ref="efFileEl" type="file" multiple hidden @change="onPickEf" />
 
         <div class="btn-row" style="margin-top: 12px">
-          <button class="btn btn-primary" :disabled="busy" @click="packStation">📦 打包下载赛站汇总 ZIP</button>
+          <button class="btn btn-primary" :disabled="busy" @click="packStation">打包下载赛站汇总 ZIP</button>
         </div>
         <p class="hint">
           将生成「{{ sanitizeName(stationName || '赛站') }}-报销材料汇总.zip」：每队一个文件夹 +

@@ -204,7 +204,7 @@ function changeType(ev) {
               :class="f.meta.header.ok ? 'ok' : 'bad'"
               :title="f.meta.header.ok ? '发票抬头含「东南大学」' : '未识别到「东南大学」抬头，请人工核对该发票'"
             >
-              抬头{{ f.meta.header.ok ? '✓' : '⚠' }}
+              抬头{{ f.meta.header.ok ? '✓' : '需核对' }}
             </span>
             <span
               v-if="f.meta && f.meta.cabin"
@@ -212,7 +212,7 @@ function changeType(ev) {
               :class="f.meta.cabin.ok ? 'ok' : 'bad'"
               :title="f.meta.cabin.ok ? '含「经济舱」字样' : '未识别到「经济舱」字样，飞机仅限经济舱，请人工核对'"
             >
-              {{ f.meta.cabin.ok ? '经济舱✓' : '未见经济舱⚠' }}
+              {{ f.meta.cabin.ok ? '含经济舱' : '未见经济舱' }}
             </span>
             <span
               v-if="f.meta && f.meta.scopeAuto"
@@ -258,7 +258,7 @@ function changeType(ev) {
             :class="f.meta.header.ok ? 'ok' : 'bad'"
             :title="f.meta.header.ok ? '发票抬头含「东南大学」' : '未识别到「东南大学」抬头，请人工核对该文件'"
           >
-            抬头{{ f.meta.header.ok ? '✓' : '⚠' }}
+            抬头{{ f.meta.header.ok ? '✓' : '需核对' }}
           </span>
           <input v-model="f.amount" class="file-amount" placeholder="金额" inputmode="decimal" />
           <div class="file-members">
@@ -320,7 +320,7 @@ function changeType(ev) {
             placeholder="不一致时填写情况说明（如通过平台代订，收款方为平台），可直接找酒店相关人员询问并请其开具证明；打包时将生成情况说明书 docx 一并提交"
           ></textarea>
         </div>
-        <div class="slot-note">识别支持：文本型 PDF、图片（OCR）、OFD 发票、扫描件 PDF（部分浏览器不支持扫描件，请转图片后上传）。中文模型已内置，离线可用。</div>
+        <div class="slot-note">识别支持：文本型 PDF、图片（OCR）、OFD 发票、扫描件 PDF（部分浏览器不支持时请转图片上传）。</div>
       </div>
     </div>
     <input ref="fileEl" type="file" multiple hidden @change="onPick" />

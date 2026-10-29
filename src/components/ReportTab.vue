@@ -136,7 +136,7 @@ async function copyMsg(i) {
       <h3>三、办理流程</h3>
       <div style="padding-left: 4px">
         <div v-for="(f, i) in FLOW" :key="i" style="font-size: 14px">
-          {{ state.flow[i] ? '✅' : '⬜' }} {{ f.t }}
+          {{ state.flow[i] ? '✓' : '○' }} {{ f.t }}
         </div>
       </div>
 

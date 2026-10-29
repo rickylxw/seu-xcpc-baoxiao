@@ -21,7 +21,7 @@ async function copyTax() {
 <template>
   <section id="tab-overview" class="tab-pane">
     <div class="card quickstart no-print">
-      <h2>快速上手 · 先看我</h2>
+      <h2>快速上手</h2>
       <div class="qs-grid">
         <div class="qs-col">
           <div class="qs-role">我是队员</div>
