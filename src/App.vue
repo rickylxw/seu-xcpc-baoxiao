@@ -6,7 +6,8 @@ import MembersTab from './components/MembersTab.vue'
 import ApprovalTab from './components/ApprovalTab.vue'
 import FilesTab from './components/FilesTab.vue'
 import ReportTab from './components/ReportTab.vue'
-import { ui, toast, closePreview } from './store'
+import WizardShell from './components/WizardShell.vue'
+import { state, ui, toast, closePreview } from './store'
 import { version as appVersion } from '../package.json'
 import { onBeforeUnmount, onMounted, watchEffect } from 'vue'
 
@@ -25,7 +26,8 @@ onBeforeUnmount(() => removeEventListener('keydown', onViewerKey))
 
 <template>
   <TopBar />
-  <TabNav />
+  <WizardShell v-if="state.wizard.enabled" />
+  <TabNav v-else />
   <main class="container">
     <OverviewTab v-show="ui.tab === 'overview'" />
     <MembersTab v-show="ui.tab === 'members'" />

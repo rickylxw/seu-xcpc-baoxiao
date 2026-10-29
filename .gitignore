@@ -10,3 +10,4 @@ tmp-out
 tmp-*.mjs
 tmp-*.js
 3 发票*.docx
+.zcode/

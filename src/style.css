@@ -568,3 +568,26 @@ footer .foot-meta a:hover { text-decoration: underline; }
 .qs-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .qs-who { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 6px; }
 @media (max-width: 800px) { .qs-grid { grid-template-columns: 1fr; } }
+
+/* 向导模式步骤条 */
+.wizard-bar {
+  position: sticky; top: 0; z-index: 50;
+  background: #fff; border-bottom: 1px solid var(--line);
+  padding: 10px 16px; box-shadow: var(--shadow);
+}
+.wiz-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.wiz-title { font-weight: 700; color: var(--primary-ink); font-size: 14px; }
+.wiz-steps { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; padding: 0; list-style: none; }
+.wiz-steps li {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 13px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+}
+.wiz-steps li.current { border-color: var(--primary); color: var(--primary-dark); background: var(--primary-bg); font-weight: 600; }
+.wiz-steps li.done { color: var(--green); border-color: var(--green-bg); background: var(--green-bg); }
+.wiz-num { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: var(--bg); font-size: 12px; }
+.wiz-steps li.current .wiz-num { background: var(--primary); color: #fff; }
+.wiz-steps li.done .wiz-num { background: var(--green); color: #fff; }
+.wiz-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13.5px; }
+.wiz-ok { color: var(--green); font-size: 13px; }
+.wiz-todo { color: var(--amber); font-size: 13px; }
