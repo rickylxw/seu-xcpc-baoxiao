@@ -4,6 +4,13 @@ import { state, resetAll, exportData, importDataFile } from '../store'
 
 const fileEl = ref(null)
 
+/** 从自由模式回到分步向导（回到角色选择，可换角色） */
+function enterWizard() {
+  state.wizard.enabled = true
+  state.wizard.role = ''
+  state.wizard.step = 0
+}
+
 function onReset() {
   if (confirm('确定清空全部填写内容？此操作不可恢复。')) resetAll()
 }
@@ -25,6 +32,14 @@ async function onImport(e) {
         </div>
       </div>
       <div class="topbar-actions">
+        <button
+          v-if="!state.wizard.enabled"
+          class="btn btn-sm"
+          title="按角色分步引导整理报销材料"
+          @click="enterWizard"
+        >
+          向导模式
+        </button>
         <button class="btn btn-sm" title="把当前填写内容导出为 JSON 文件，可发给别人继续填写" @click="exportData">
           导出数据
         </button>
