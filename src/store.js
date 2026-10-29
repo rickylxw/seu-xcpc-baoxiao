@@ -30,6 +30,7 @@ export function defaultState() {
     teamName: '',
     members: [], // { name, card }
     flow: [false, false, false, false],
+    wizard: { enabled: true, role: '', step: 0, done: [], memberDone: false }, // 完全向导：持久化（刷新恢复角色/步骤/✓标记；memberDone=队员确认已交队长）
     serverOcr: {
       enabled: true, // 启用后图片/扫描件改走服务端视觉模型识别（默认同源 /v1，由部署侧 server.js 代理到其本机 Ollama）
       baseUrl: '/v1', // 同源代理（server.js）；也可改为任意 OpenAI 兼容接口或 Ollama 地址
@@ -112,8 +113,11 @@ export const pkg = reactive({ legs: [], cross: [] })
 
 export const ui = reactive({ tab: 'overview', printTarget: '', preview: null })
 
-/** 分步向导状态：刻意不持久化——每次打开 / 刷新都从角色选择开始（已填数据不受影响） */
-export const wizard = reactive({ enabled: true, role: '', step: 0 })
+/** 分步向导状态：随 state 持久化（刷新恢复角色/步骤/✓标记；role 为空 = 显示角色选择首屏） */
+export const wizard = state.wizard
+
+/** 材料打包页的视图模式（team / station）：向导可远程切换，故放 store */
+export const filesUi = reactive({ mode: 'team' })
 
 /** 图片预览浮层：懒创建 objectURL，关闭时立即释放 */
 export function previewFile(file) {

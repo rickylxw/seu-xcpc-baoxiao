@@ -3,7 +3,7 @@
    每个步骤只显示与之相关的卡片（show 为 h2 标题子串清单；空 = 不过滤），
    由 MutationObserver 在页签内容变化时自动重新应用。 */
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
-import { state, pkg, ui, wizard, showToast } from '../store'
+import { state, pkg, ui, wizard, filesUi, showToast } from '../store'
 import { missingRequired, coverageGaps, payCheckIssues } from '../data/packaging'
 
 const ROLES = {
@@ -23,6 +23,14 @@ const steps = computed(() => {
   if (wizard.role === 'leader') {
     return [
       {
+        key: 'l0', tab: 'overview', title: '先收齐两样东西', hint: '开始前先向各队队长收齐打包材料',
+        show: ['快速上手'],
+        guide: [
+          { t: '各队 ZIP', d: '队长们在「材料打包」页打包的队伍材料包' },
+          { t: '参赛费材料', d: '参赛费发票、支付记录、邀请函（由负责人统一收取）' },
+        ],
+      },
+      {
         key: 'l1', tab: 'members', title: '录入同学清单', hint: '收齐各队参赛同学一卡通号后录入，用于归属核对与清单导出',
         guide: [
           { t: '批量录入', d: '支持把「姓名 一卡通号」名单整段粘贴，自动拆分；也可逐个添加' },
@@ -31,18 +39,19 @@ const steps = computed(() => {
         ],
       },
       {
-        key: 'l2', tab: 'approval', title: '填写差旅审批单', hint: '报销负责人填写一次，随赛站汇总材料提交',
+        key: 'l2', tab: 'files', title: '赛站汇总打包', hint: '切到「赛站汇总（负责人）」模式，导入各队 ZIP 与参赛费材料后打包', scrollTo: '参赛费', filesMode: 'station', show: [],
         guide: [
-          { t: '自动带出', d: '出差人名单取自同学清单，起讫日期取自行程信息' },
-          { t: '生成 docx', d: '按学校模板生成标准 Word 文件，下载打印签字' },
+          { t: '已自动切模式', d: '本步已切到「赛站汇总（负责人）」视图' },
+          { t: '收两样', d: '各队打包的 ZIP ＋ 负责人统一收取的参赛费材料（发票 / 支付记录 / 邀请函）' },
+          { t: '自动合并', d: '各队 ZIP 自动解包，每队一个文件夹并附该队待办清单，最后打包赛站总包' },
         ],
       },
       {
-        key: 'l3', tab: 'files', title: '赛站汇总打包', hint: '切到「赛站汇总（负责人）」模式，导入各队 ZIP 与参赛费材料后打包', scrollTo: '参赛费',
+        key: 'l3', tab: 'approval', title: '填写差旅审批单', hint: '收齐各队名单后再定稿：出差人名单取自同学清单，起讫日期取自行程信息',
         guide: [
-          { t: '切模式', d: '材料打包页顶部切「赛站汇总（负责人）」' },
-          { t: '收两样', d: '各队打包的 ZIP ＋ 负责人统一收取的参赛费材料（发票 / 支付记录 / 邀请函）' },
-          { t: '自动合并', d: '各队 ZIP 自动解包，每队一个文件夹并附该队待办清单，最后打包赛站总包' },
+          { t: '自动带出', d: '出差人名单取自同学清单，起讫日期取自行程信息' },
+          { t: '生成 docx', d: '按学校模板生成标准 Word 文件，下载打印签字' },
+          { t: '后置原因', d: '收齐各队 ZIP 后名单可能微调，建议此时再定稿审批单' },
         ],
       },
       {
@@ -75,6 +84,7 @@ const steps = computed(() => {
       key: 'c3', tab: 'files', title: '逐段核对', hint: '补齐缺的必附材料，逐段核对每个文件的金额、归属队员、去 / 返程勾选', show: ['往返交通', '赛站住宿', '材料准备进度'], scrollTo: '材料准备进度',
       guide: [
         { t: '补缺必附', d: '行程段里缺的必附材料会在槽位处标注，缺什么传什么' },
+        { t: '识别结果抽查', d: '批量导入最大的坑是识别错：逐条对照原件核对金额与归属；识别失败的文件槽位有标注，可重新上传或手动填写' },
         { t: '逐文件核对', d: '每个文件：金额对不对、归属队员全不全、去 / 返程勾对没有' },
         { t: '看进度表', d: '「材料准备进度」按人检查去程 / 返程 / 住宿发票，缺的人名直接列出' },
       ],
@@ -102,26 +112,47 @@ const stepIndex = computed(() => Math.min(wizard.step || 0, steps.value.length -
 const current = computed(() => steps.value[stepIndex.value])
 
 const doneChecks = computed(() => {
-  if (wizard.role !== 'captain') return {}
+  // 三态：true 已完成 / false 未完成 / null 尚未开始（前置条件未满足）
+  if (wizard.role === 'member') {
+    return { m1: null, m2: null, m3: wizard.memberDone === true }
+  }
+  if (wizard.role === 'leader') {
+    return {
+      l0: null,
+      l1: state.members.length > 0,
+      l2: null, // 打包是手动动作
+      l3: state.approval.done === true,
+      l4: null,
+    }
+  }
+  const hasMaterials = pkg.legs.some((l) => l.files.length)
+  const hasInv = pkg.legs.some((l) => l.files.some((f) => ['f_invoice', 'h_invoice'].includes(f.slot)))
+  const hasPay = pkg.legs.some((l) => l.files.some((f) => ['f_pay', 'h_pay'].includes(f.slot)))
   return {
     c1: !!(state.meta.contest && state.meta.dateReturn),
-    c2: pkg.legs.some((l) => l.files.length),
-    c3: missingRequired().length === 0 && coverageGaps().length === 0,
-    c4: payCheckIssues().length === 0,
-    c5: false, // 打包是手动动作，无完成态
+    c2: hasMaterials,
+    c3: !hasMaterials ? null : missingRequired().length === 0 && coverageGaps().length === 0,
+    c4: !hasInv || !hasPay ? null : payCheckIssues().length === 0,
+    c5: null, // 打包是手动动作
   }
 })
 
-/* ---- 步骤卡片过滤：只显示当前步骤相关的卡片 ---- */
+/* ---- 步骤卡片过滤（P1 修复版）：不改卡片内联样式 —— 给 main 挂/摘 wizard-filtering
+   class，配合 CSS 隐藏非本步卡片；退出向导 / 切换角色时摘掉 class 即全部恢复 ---- */
 function applyCardFilter() {
-  if (!wizard.enabled || !wizard.role) return
   const main = document.querySelector('main')
   if (!main) return
-  const show = current.value.show || []
+  const active = wizard.enabled && !!wizard.role && (current.value.show?.length > 0)
+  main.classList.toggle('wizard-filtering', active)
+  if (!active) {
+    for (const card of main.querySelectorAll('.card[data-wkeep]')) card.removeAttribute('data-wkeep')
+    return
+  }
   for (const card of main.querySelectorAll('.card')) {
     const title = card.querySelector('h2')?.textContent || ''
-    const visible = !show.length || show.some((t) => title.includes(t))
-    if (card.style.display !== (visible ? '' : 'none')) card.style.display = visible ? '' : 'none'
+    const keep = (current.value.show || []).some((t) => title.includes(t))
+    if (keep) card.setAttribute('data-wkeep', '')
+    else card.removeAttribute('data-wkeep')
   }
 }
 
@@ -139,13 +170,14 @@ onBeforeUnmount(() => cardObserver && cardObserver.disconnect())
 
 function applyStep() {
   ui.tab = current.value.tab
+  if (current.value.filesMode) filesUi.mode = current.value.filesMode
   applyCardFilter()
   watchCards()
   const sel = current.value.scrollTo
   if (!sel) return
   requestAnimationFrame(() => {
     const card = [...document.querySelectorAll('main .card')].find(
-      (c) => c.style.display !== 'none' && c.querySelector('h2')?.textContent.includes(sel),
+      (c) => c.getAttribute('data-wkeep') !== null && c.querySelector('h2')?.textContent.includes(sel),
     )
     card?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   })
@@ -158,12 +190,15 @@ function chooseRole(role) {
 }
 function rechoose() {
   wizard.role = ''
+  applyCardFilter()
 }
 function setStep(i) {
   wizard.step = i
   applyStep()
 }
 function next() {
+  const key = current.value.key
+  if (!wizard.done.includes(key)) wizard.done.push(key) // 已走过的步骤保留 ✓ 标记
   if (stepIndex.value < steps.value.length - 1) setStep(stepIndex.value + 1)
 }
 function prev() {
@@ -171,6 +206,7 @@ function prev() {
 }
 function exitWizard() {
   wizard.enabled = false
+  applyCardFilter() // 摘掉过滤 class，恢复全部卡片显示
 }
 
 watch(
@@ -229,6 +265,7 @@ async function copyText(t, label) {
     <div v-if="showAI" class="wiz-ai-panel">
       <p class="hint" style="margin: 0 0 6px">
         适合会用 AI 的同学：需要你的 AI 能联网执行 HTTP，或已配置下方 MCP。材料仅在部署服务器内存暂存 4 小时。
+        需部署形态（node server.js）才提供 <code>/api/agent</code> 与 MCP 接口。
       </p>
       <div class="ai-line">
         <span>① 把这句话发给你的 AI：</span>
@@ -247,6 +284,7 @@ async function copyText(t, label) {
     </div>
 
     <p class="hint" style="margin: 12px 0 0">
+      不同角色请各自使用自己的电脑 / 浏览器操作（填写内容存在本机，会互相覆盖）。
       更熟悉本工具的同学可以
       <a href="javascript:;" @click="exitWizard">退出向导使用自由模式</a>。
     </p>
@@ -274,6 +312,10 @@ async function copyText(t, label) {
       <span class="hint" style="margin: 0">{{ current.hint }}</span>
       <span v-if="doneChecks[current.key] === true" class="wiz-ok">已完成</span>
       <span v-else-if="doneChecks[current.key] === false" class="wiz-todo">本步未完成（可先跳过，打包前请回来处理）</span>
+      <span v-else-if="doneChecks[current.key] === null" class="wiz-todo">尚未开始</span>
+      <label v-if="current.key === 'm3'" class="mem-chk wiz-confirm">
+        <input type="checkbox" v-model="wizard.memberDone" />确认已把材料交给队长
+      </label>
       <span style="flex: 1"></span>
       <button type="button" class="btn btn-sm" :disabled="stepIndex === 0" @click="prev">上一步</button>
       <button type="button" class="btn btn-primary btn-sm" :disabled="stepIndex === steps.length - 1" @click="next">下一步</button>

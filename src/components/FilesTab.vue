@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { state, pkg, showToast, recogStats, previewFile } from '../store'
+import { state, pkg, showToast, recogStats, previewFile, filesUi } from '../store'
 import {
   GROUPS,
   TYPE_META,
@@ -25,7 +25,11 @@ import { fetchModelList } from '../utils/serverRecog'
 import { recognizeInto } from '../utils/pdfText'
 import LegCard from './LegCard.vue'
 
-const mode = ref('team') // team | station
+// 视图模式放 store（filesUi）：向导步骤可远程切换（负责人 l2 自动切「赛站汇总」）
+const mode = computed({
+  get: () => filesUi.mode,
+  set: (v) => { filesUi.mode = v },
+})
 
 // 服务器端识别配置（部署形态：同源 /v1 代理，由 server.js 转发到服务器本机的 Ollama）
 const modelList = ref([])

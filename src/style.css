@@ -646,3 +646,7 @@ footer .foot-meta a:hover { text-decoration: underline; }
   display: inline-flex; align-items: center; justify-content: center;
 }
 .wiz-guide-list b { color: var(--primary-ink); margin-right: 6px; }
+
+/* 向导过滤：挂 class 时只显示标记 data-wkeep 的卡片（P1 修复——不再改内联样式，退出即恢复） */
+main.wizard-filtering .card:not([data-wkeep]) { display: none !important; }
+.wiz-confirm { font-size: 13.5px; }
