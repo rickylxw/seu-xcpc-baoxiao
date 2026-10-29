@@ -7,7 +7,7 @@ import ApprovalTab from './components/ApprovalTab.vue'
 import FilesTab from './components/FilesTab.vue'
 import ReportTab from './components/ReportTab.vue'
 import WizardShell from './components/WizardShell.vue'
-import { state, ui, toast, closePreview } from './store'
+import { state, wizard, ui, toast, closePreview } from './store'
 import { version as appVersion } from '../package.json'
 import { onBeforeUnmount, onMounted, watchEffect } from 'vue'
 
@@ -26,10 +26,10 @@ onBeforeUnmount(() => removeEventListener('keydown', onViewerKey))
 
 <template>
   <TopBar />
-  <WizardShell v-if="state.wizard.enabled" />
-  <TabNav v-else-if="!state.wizard.enabled" />
+  <WizardShell v-if="wizard.enabled" />
+  <TabNav v-else-if="!wizard.enabled" />
   <!-- 未选角色时首屏只显示角色选择，隐藏页面内容 -->
-  <main v-if="!state.wizard.enabled || state.wizard.role" class="container">
+  <main v-if="!wizard.enabled || wizard.role" class="container">
     <OverviewTab v-show="ui.tab === 'overview'" />
     <MembersTab v-show="ui.tab === 'members'" />
     <ApprovalTab v-show="ui.tab === 'approval'" />

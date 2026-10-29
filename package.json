@@ -1,7 +1,7 @@
 {
   "name": "xcpc-baoxiao",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "XCPC 报销材料整理工具（东南大学）—— Vue 3 + Vite",
   "type": "module",
   "scripts": {

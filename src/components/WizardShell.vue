@@ -3,7 +3,7 @@
    每个步骤只显示与之相关的卡片（show 为 h2 标题子串清单；空 = 不过滤），
    由 MutationObserver 在页签内容变化时自动重新应用。 */
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
-import { state, pkg, ui, showToast } from '../store'
+import { state, pkg, ui, wizard, showToast } from '../store'
 import { missingRequired, coverageGaps, payCheckIssues } from '../data/packaging'
 
 const ROLES = {
@@ -13,14 +13,14 @@ const ROLES = {
 }
 
 const steps = computed(() => {
-  if (state.wizard.role === 'member') {
+  if (wizard.role === 'member') {
     return [
       { key: 'm1', tab: 'overview', title: '了解要交什么', hint: '看本页「关键信息」与常见漏项：保存好发票、支付截图、机票订单 / 行程单、酒店流水等材料原件', show: ['快速上手', '关键信息'] },
       { key: 'm2', tab: 'overview', title: '交给队长', hint: '本队所有支付统一由队长承担，个人勿垫付；把材料交给队长，由队长统一导入本工具', show: ['快速上手'] },
       { key: 'm3', tab: 'overview', title: '完成', hint: '后续导入与核对由队长完成；如发现归属或金额有误，及时提醒队长修改', show: ['快速上手'] },
     ]
   }
-  if (state.wizard.role === 'leader') {
+  if (wizard.role === 'leader') {
     return [
       { key: 'l1', tab: 'members', title: '录入同学清单', hint: '收齐各队参赛同学一卡通号后录入，用于归属核对与清单导出' },
       { key: 'l2', tab: 'approval', title: '填写差旅审批单', hint: '报销负责人填写一次，随赛站汇总材料提交' },
@@ -37,11 +37,11 @@ const steps = computed(() => {
   ]
 })
 
-const stepIndex = computed(() => Math.min(state.wizard.step || 0, steps.value.length - 1))
+const stepIndex = computed(() => Math.min(wizard.step || 0, steps.value.length - 1))
 const current = computed(() => steps.value[stepIndex.value])
 
 const doneChecks = computed(() => {
-  if (state.wizard.role !== 'captain') return {}
+  if (wizard.role !== 'captain') return {}
   return {
     c1: !!(state.meta.contest && state.meta.dateReturn),
     c2: pkg.legs.some((l) => l.files.length),
@@ -53,7 +53,7 @@ const doneChecks = computed(() => {
 
 /* ---- 步骤卡片过滤：只显示当前步骤相关的卡片 ---- */
 function applyCardFilter() {
-  if (!state.wizard.enabled || !state.wizard.role) return
+  if (!wizard.enabled || !wizard.role) return
   const main = document.querySelector('main')
   if (!main) return
   const show = current.value.show || []
@@ -91,15 +91,15 @@ function applyStep() {
 }
 
 function chooseRole(role) {
-  state.wizard.role = role
-  state.wizard.step = 0
+  wizard.role = role
+  wizard.step = 0
   applyStep()
 }
 function rechoose() {
-  state.wizard.role = ''
+  wizard.role = ''
 }
 function setStep(i) {
-  state.wizard.step = i
+  wizard.step = i
   applyStep()
 }
 function next() {
@@ -109,13 +109,13 @@ function prev() {
   if (stepIndex.value > 0) setStep(stepIndex.value - 1)
 }
 function exitWizard() {
-  state.wizard.enabled = false
+  wizard.enabled = false
 }
 
 watch(
-  () => [state.wizard.enabled, state.wizard.role, state.wizard.step],
+  () => [wizard.enabled, wizard.role, wizard.step],
   () => {
-    if (state.wizard.enabled && state.wizard.role) applyStep()
+    if (wizard.enabled && wizard.role) applyStep()
   },
   { immediate: true },
 )
@@ -141,7 +141,7 @@ async function copyText(t, label) {
 
 <template>
   <!-- 未选角色：角色选择瓦片 + AI 入口 -->
-  <div v-if="!state.wizard.role" class="card wiz-choose no-print">
+  <div v-if="!wizard.role" class="card wiz-choose no-print">
     <h2>开始整理报销材料</h2>
     <p class="hint">选择你的角色，进入对应的分步向导，照着步骤走就能完成。选错了随时能在向导顶部切换。</p>
     <div class="wiz-tiles">
@@ -194,7 +194,7 @@ async function copyText(t, label) {
   <!-- 已选角色：分步步骤条 -->
   <div v-else class="wizard-bar no-print">
     <div class="wiz-head">
-      <span class="wiz-title">向导模式 · {{ ROLES[state.wizard.role]?.name || '队长' }}</span>
+      <span class="wiz-title">向导模式 · {{ ROLES[wizard.role]?.name || '队长' }}</span>
       <button type="button" class="btn btn-sm" @click="rechoose">切换角色</button>
       <button type="button" class="btn btn-sm" @click="exitWizard">退出向导（自由模式）</button>
     </div>

@@ -30,7 +30,6 @@ export function defaultState() {
     teamName: '',
     members: [], // { name, card }
     flow: [false, false, false, false],
-    wizard: { enabled: true, role: '', step: 0 }, // 完全向导模式：默认开启；role 为空显示角色选择页，选后按角色走步骤
     serverOcr: {
       enabled: true, // 启用后图片/扫描件改走服务端视觉模型识别（默认同源 /v1，由部署侧 server.js 代理到其本机 Ollama）
       baseUrl: '/v1', // 同源代理（server.js）；也可改为任意 OpenAI 兼容接口或 Ollama 地址
@@ -112,6 +111,9 @@ if (typeof window !== 'undefined') addEventListener('beforeunload', saveNow)
 export const pkg = reactive({ legs: [], cross: [] })
 
 export const ui = reactive({ tab: 'overview', printTarget: '', preview: null })
+
+/** 分步向导状态：刻意不持久化——每次打开 / 刷新都从角色选择开始（已填数据不受影响） */
+export const wizard = reactive({ enabled: true, role: '', step: 0 })
 
 /** 图片预览浮层：懒创建 objectURL，关闭时立即释放 */
 export function previewFile(file) {
