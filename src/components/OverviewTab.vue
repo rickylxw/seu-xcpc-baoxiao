@@ -24,19 +24,27 @@ async function copyTax() {
       <h2>快速上手 · 先看我</h2>
       <div class="qs-grid">
         <div class="qs-col">
-          <div class="qs-role">我是队员（交材料）</div>
+          <div class="qs-role">我是队员</div>
           <ol class="qs-steps">
-            <li><b>存好材料</b>：发票、支付记录、机票订单 / 行程单（购票勿勾选保险）、酒店流水，拍照或截图保存。</li>
-            <li><b>一键导入</b>：到「材料打包」页用批量导入自动分类上传，再逐段核对金额、归属队员、去 / 返程勾选和收付款核对。</li>
-            <li><b>打包上交</b>：点「打包下载队伍 ZIP」，把文件发给报销负责人。</li>
+            <li><b>存好材料</b>：发票、支付截图、机票订单 / 行程单、酒店流水，拍照或截图保存。</li>
+            <li><b>交给队长</b>：本队所有支付统一由队长承担，个人勿垫付后再报销。</li>
+            <li><b>配合核对</b>：确认队长录入的归属、金额与自己的实际花费一致。</li>
+          </ol>
+        </div>
+        <div class="qs-col">
+          <div class="qs-role">我是队长</div>
+          <ol class="qs-steps">
+            <li><b>统一支付</b>：本队全部费用由你一人支付，购票勿勾选保险，索取发票与支付凭证。</li>
+            <li><b>导入核对</b>：在「材料打包」页批量导入自动分类，核对金额、归属队员、去 / 返程和收付款一致。</li>
+            <li><b>打包上交</b>：点「打包下载队伍 ZIP」，连同参赛费材料一起交报销负责人。</li>
           </ol>
           <button type="button" class="btn btn-primary btn-sm" @click="ui.tab = 'files'">去材料打包 →</button>
         </div>
         <div class="qs-col">
-          <div class="qs-role">我是队长 / 报销负责人</div>
+          <div class="qs-role">我是报销负责人</div>
           <ol class="qs-steps">
-            <li><b>赛前</b>：确定报销负责人，在「同学清单」录全队一卡通号。</li>
-            <li><b>收材料</b>：收齐各队 ZIP，在「差旅审批单」填写信息，用「赛站汇总」把全部队伍和参赛费材料打包。</li>
+            <li><b>赛前</b>：在「同学清单」录全部参赛同学一卡通号。</li>
+            <li><b>汇总</b>：收齐各队 ZIP，填「差旅审批单」，用「赛站汇总」打包全部队伍和参赛费材料。</li>
             <li><b>跟进</b>：按下方「报销办理流程」四步推进，未完成项会出现在「核对报告」。</li>
           </ol>
           <div class="qs-btns">

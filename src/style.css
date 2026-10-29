@@ -569,7 +569,7 @@ footer .foot-meta a:hover { text-decoration: underline; }
 
 /* 快速上手（新手指引卡） */
 .quickstart { border: 1.5px solid var(--primary-border); background: linear-gradient(180deg, #f2faf7, #ffffff); }
-.qs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; margin-top: 8px; }
+.qs-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 16px; margin-top: 8px; }
 .qs-role { font-weight: 700; font-size: 14px; color: var(--primary-ink); margin: 4px 0 8px; padding-left: 10px; border-left: 3px solid var(--primary); }
 .qs-steps { margin: 0 0 12px; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; font-size: 13.5px; line-height: 1.6; color: var(--ink); }
 .qs-steps b { color: var(--primary-ink); }
