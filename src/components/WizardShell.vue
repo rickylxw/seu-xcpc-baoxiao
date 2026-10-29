@@ -15,9 +15,9 @@ const ROLES = {
 const steps = computed(() => {
   if (wizard.role === 'member') {
     return [
-      { key: 'm1', tab: 'overview', title: '了解要交什么', hint: '看本页「关键信息」与常见漏项：保存好发票、支付截图、机票订单 / 行程单、酒店流水等材料原件', show: ['快速上手', '关键信息'] },
-      { key: 'm2', tab: 'overview', title: '交给队长', hint: '本队所有支付统一由队长承担，个人勿垫付；把材料交给队长，由队长统一导入本工具', show: ['快速上手'] },
-      { key: 'm3', tab: 'overview', title: '完成', hint: '后续导入与核对由队长完成；如发现归属或金额有误，及时提醒队长修改', show: ['快速上手'] },
+      { key: 'm1', tab: 'overview', title: '要保存哪些材料', hint: '对照下方清单逐项检查你的材料，都保存好原件或截图', show: ['队员 · 需要保存的材料', '关键信息'] },
+      { key: 'm2', tab: 'overview', title: '交给队长', hint: '按下方的交法把材料交给队长，由队长统一导入本工具核对', show: ['队员 · 如何交给队长'] },
+      { key: 'm3', tab: 'overview', title: '完成', hint: '队长导入核对时如发现归属或金额有误，会找你确认；有遗漏现在补还来得及', show: ['队员 · 需要保存的材料', '队员 · 如何交给队长'] },
     ]
   }
   if (wizard.role === 'leader') {

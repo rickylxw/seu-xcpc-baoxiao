@@ -619,3 +619,13 @@ footer .foot-meta a:hover { text-decoration: underline; }
   padding: 8px 10px; font-size: 12.5px; font-family: Consolas, Monaco, monospace;
   color: var(--ink); background: #fff; resize: vertical; white-space: pre;
 }
+
+/* 队员向导卡片：材料清单 / 交接说明 */
+.mem-mats { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.mem-mat {
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line); border-left: 3px solid var(--primary);
+  border-radius: 6px; padding: 8px 12px; background: var(--bg);
+}
+.mem-mat b { font-size: 14px; color: var(--primary-ink); }
+.mem-mat span { font-size: 13px; color: var(--ink); line-height: 1.6; }

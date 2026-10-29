@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { state, ui, FLOW, showToast } from '../store'
+import { state, ui, wizard, FLOW, showToast } from '../store'
 import { copyText, fmtDateCN } from '../utils/misc'
 
 const TAX_TEXT = '单位名称：东南大学\n税务识别号：12100000466006770Q'
@@ -16,17 +16,59 @@ async function copyTax() {
   await copyText(TAX_TEXT)
   showToast('抬头与税号已复制')
 }
-
-/** 进入对应角色的分步向导 */
-function startWizard(role) {
-  state.wizard.enabled = true
-  state.wizard.role = role
-  state.wizard.step = 0
-}
 </script>
 
 <template>
   <section id="tab-overview" class="tab-pane">
+    <!-- 队员向导专用卡片（仅向导模式 + 队员角色显示） -->
+    <template v-if="wizard.enabled && wizard.role === 'member'">
+      <div class="card">
+        <h2>队员 · 需要保存的材料</h2>
+        <p class="hint">对照你在这场比赛里的实际花费，逐项保存材料原件或截图。所有材料上都要能看到你的姓名。</p>
+        <div class="mem-mats">
+          <div class="mem-mat">
+            <b>往返交通（飞机）</b>
+            <span>机票发票（PDF / OFD 原件）＋ 机票支付记录截图 ＋ 订单 / 行程单；<b>购票时不要勾选保险等附加服务</b>，避免金额对不上</span>
+          </div>
+          <div class="mem-mat">
+            <b>往返交通（高铁）</b>
+            <span>12306 车票报销凭证（打印）；仅限二等座</span>
+          </div>
+          <div class="mem-mat">
+            <b>住宿</b>
+            <span>住宿发票（抬头开「东南大学」）＋ 支付记录 / POS 单 ＋ 酒店流水（前台盖章）</span>
+          </div>
+          <div class="mem-mat">
+            <b>参赛费</b>
+            <span>支付记录找队长或报销负责人要，自己不用管</span>
+          </div>
+        </div>
+        <p class="hint" style="margin: 10px 0 0">
+          ⚠ 支付金额必须与发票金额一致（勿选保险 / 勿凑单）；材料不齐的不能报销。
+        </p>
+      </div>
+      <div class="card">
+        <h2>队员 · 如何交给队长</h2>
+        <div class="mem-mats">
+          <div class="mem-mat">
+            <b>电子材料</b>
+            <span>PDF / OFD / 截图直接发到队群或私发队长</span>
+          </div>
+          <div class="mem-mat">
+            <b>纸质原件</b>
+            <span>高铁票打印件、酒店流水：拍照留底后把原件交给队长</span>
+          </div>
+          <div class="mem-mat">
+            <b>支付</b>
+            <span>全部由队长统一承担，个人不要垫付</span>
+          </div>
+          <div class="mem-mat">
+            <b>之后</b>
+            <span>队长会导入本工具核对归属和金额；有问题会找你确认</span>
+          </div>
+        </div>
+      </div>
+    </template>
     <div class="card quickstart no-print">
       <h2>快速上手</h2>
       <div class="qs-grid">
