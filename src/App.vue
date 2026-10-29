@@ -27,8 +27,9 @@ onBeforeUnmount(() => removeEventListener('keydown', onViewerKey))
 <template>
   <TopBar />
   <WizardShell v-if="state.wizard.enabled" />
-  <TabNav v-else />
-  <main class="container">
+  <TabNav v-else-if="!state.wizard.enabled" />
+  <!-- 未选角色时首屏只显示角色选择，隐藏页面内容 -->
+  <main v-if="!state.wizard.enabled || state.wizard.role" class="container">
     <OverviewTab v-show="ui.tab === 'overview'" />
     <MembersTab v-show="ui.tab === 'members'" />
     <ApprovalTab v-show="ui.tab === 'approval'" />
