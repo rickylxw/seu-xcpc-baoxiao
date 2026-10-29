@@ -7,6 +7,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import * as Core from './src/data/core.js'
+import { sanitizeName } from './src/utils/misc.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -183,6 +184,62 @@ function recognizeAsync(session, rec) {
   })
 }
 
+/**
+ * 服务器版「发票汇总-扫描打印版.pdf」：发票/凭证类材料按清单顺序合成一个 PDF。
+ * 图片（jpg/png）按 A4 排版；PDF 原件无损拷页；OFD 等无法解析的跳过并记录。
+ * pdf-lib 可用时才生成（返回 null 表示环境缺依赖或没有发票材料）。
+ */
+async function buildInvoicesPdfServer(session) {
+  let PDFDocument
+  try {
+    PDFDocument = (await import('pdf-lib')).PDFDocument
+  } catch (e) {
+    console.error('[invoices] pdf-lib 导入失败:', String((e && e.message) || e))
+    return null
+  }
+  const A4 = { w: 595.28, h: 841.89 }
+  const INV_SLOTS = new Set(['f_invoice', 'h_invoice', 'l_invoice', 'fee_invoice', 't_voucher'])
+  const out = await PDFDocument.create()
+  out.setTitle(`${session.st.meta?.contest || 'XCPC'} 报销发票汇总（${session.st.teamName}）`)
+  let count = 0
+  const skipped = []
+  for (const g of Core.GROUPS) {
+    for (const leg of session.pg.legs.filter((l) => l.group === g.id && l.files.length)) {
+      for (const f of leg.files) {
+        if (!INV_SLOTS.has(f.slot)) continue
+        const name = f.file?.name || f.name
+        try {
+          if (/\.pdf$/i.test(name)) {
+            const src = await PDFDocument.load(f.bytes, { ignoreEncryption: true })
+            const pages = await out.copyPages(src, src.getPageIndices())
+            pages.forEach((p) => out.addPage(p))
+          } else if (/\.(jpe?g|png)$/i.test(name)) {
+            const isPng = f.bytes[0] === 0x89 && f.bytes[1] === 0x50
+            const img = isPng ? await out.embedPng(f.bytes) : await out.embedJpg(f.bytes)
+            const page = out.addPage([A4.w, A4.h])
+            const scale = Math.min((A4.w - 40) / img.width, (A4.h - 40) / img.height, 1)
+            page.drawImage(img, {
+              x: (A4.w - img.width * scale) / 2,
+              y: (A4.h - img.height * scale) / 2,
+              width: img.width * scale,
+              height: img.height * scale,
+            })
+          } else {
+            skipped.push(`${name}（类型不支持）`)
+            continue
+          }
+          count++
+        } catch (e) {
+          skipped.push(`${name}（${String((e && e.message) || e).slice(0, 60)}）`)
+        }
+      }
+    }
+  }
+  console.error(`[invoices] 完成 ${count} 个，跳过: ${JSON.stringify(skipped)}`)
+  if (!count) return null
+  return { bytes: await out.save(), count, skipped }
+}
+
 function agentSummary(session) {
   const { st, pg } = session
   const miss = Core.missingRequiredCore(st, pg)
@@ -261,6 +318,7 @@ const agentGuide = () => ({
     舱位: '飞机仅限经济舱（材料需含「经济舱」字样）；高铁仅限二等座',
     收付款: '住宿发票盖章单位需与支付记录收款方一致；不一致需填写说明（可请酒店开具证明）',
     范围: '往返交通材料需标注去程/返程（scope: ["outbound"]/["return"]/both）',
+    发票汇总: '打包 ZIP 自动附带「发票汇总-扫描打印版.pdf」：发票/凭证类图片与 PDF 按清单顺序合成（OFD 不参与，原件仍在包内）',
   },
   endpoints: [
     { method: 'GET', path: '/api/agent', desc: '本指南' },
@@ -417,7 +475,15 @@ async function handleAgent(req, res, pathname) {
         sendJSON(res, 400, { error: { message: '请先用 PATCH /sessions/:token 设置 teamName' } })
         return
       }
-      const zip = await Core.buildTeamZipCore(session.st, session.pg)
+      const extra = []
+      const invoices = await buildInvoicesPdfServer(session)
+      if (invoices) {
+        extra.push({
+          path: `${sanitizeName(`${session.st.meta?.contest || 'XCPC'}-${session.st.teamName}-报销材料`)}/发票汇总-扫描打印版.pdf`,
+          data: invoices.bytes,
+        })
+      }
+      const zip = await Core.buildTeamZipCore(session.st, session.pg, extra)
       const buf = Buffer.from(await zip.arrayBuffer())
       send(res, 200, buf, {
         'Content-Type': 'application/zip',

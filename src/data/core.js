@@ -430,11 +430,11 @@ export function teamReportText(st, pg) {
 }
 
 /**
- * 服务器版队伍 ZIP（零依赖）：文件 + 队伍信息 + 同学清单 + 核对报告 + 说明文件。
- * 与浏览器版差异：不含「发票汇总-扫描打印版.pdf」（pdf-lib 依赖）与差旅审批单；
+ * 服务器版队伍 ZIP（零依赖）：文件 + 队伍信息 + 同学清单 + [调用方注入的附加文件] + 核对报告 + 说明文件。
+ * extraFiles：调用方（server.js）生成的 { path, data } 附加条目（如发票汇总 PDF），插在同学清单之后；
  * 收付款不一致说明为 txt 字段版（docx 正式版在浏览器打包路径）。
  */
-export async function buildTeamZipCore(st, pg) {
+export async function buildTeamZipCore(st, pg, extraFiles = []) {
   if (!String(st.teamName || '').trim()) throw new Error('请先填写队名')
   const enc = new TextEncoder()
   const root = sanitizeName(`${st.meta?.contest || 'XCPC'}-${st.teamName}-报销材料`)
@@ -456,6 +456,9 @@ export async function buildTeamZipCore(st, pg) {
   files.push({ path: `${root}/队伍信息.txt`, data: enc.encode(info.join('\n')) })
   if (st.members?.length) {
     files.push({ path: `${root}/参赛同学清单.csv`, data: enc.encode(membersCSVString(st.members)) })
+  }
+  for (const extra of extraFiles) {
+    files.push({ path: safeRel(extra.path), data: extra.data })
   }
   files.push({ path: `${root}/核对报告.txt`, data: enc.encode('\ufeff' + teamReportText(st, pg)) })
 

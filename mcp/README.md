@@ -60,4 +60,5 @@
 
 - 会话在服务器内存中保留 4 小时，过期需重建。
 - 图片材料自动走服务器 Ollama 识别；文本型 PDF/OFD 的金额归属由 AI 自行读取文件后经 `update_file` 提交。
-- 服务器版 ZIP 不含「发票汇总-扫描打印版.pdf」与差旅审批单（这两项用网页打包），其余结构与网页版一致。
+- 打包 ZIP 自动附带「发票汇总-扫描打印版.pdf」（发票/凭证类图片与 PDF 合成；OFD 不参与，原件仍在包内），需要服务器 node_modules 里有 pdf-lib 及其依赖（@pdf-lib/standard-fonts、@pdf-lib/upng、pako、tslib）。
+- 差旅审批单是负责人文件，不在队伍 ZIP 内（网页端随赛站汇总提交）。
