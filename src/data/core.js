@@ -199,13 +199,74 @@ export function trainSeatCheck(slotId, text) {
   return norm.includes('二等座') ? { ok: true } : null
 }
 
+/** 「名称：」后取值的终止字段（遇到即认为名称值结束） */
+const NAME_TERMINATORS = [
+  '统一社会信用代码', '纳税人识别号', '税号', '销售方', '售方', '购买方', '购方', '开户行',
+  '开户银行', '账  号', '账号', '地  址', '地址', '电话', '密码区', '项目名称', '货物或',
+  '开票人', '收款人', '复核', '金额', '备注', '机器编号', '机打号码', '校验码', '合计',
+]
+
+/** 提取文本里所有「名称：」/「发票抬头：」后的值（购买方区段优先由调用方截取） */
+function nameValuesIn(text) {
+  const out = []
+  const re = /(?:名\s*称|抬\s*头)\s*[：:]/g
+  let m
+  while ((m = re.exec(text))) {
+    const start = m.index + m[0].length
+    let end = text.length
+    for (const term of NAME_TERMINATORS) {
+      const t = text.indexOf(term, start)
+      if (t !== -1 && t < end) end = t
+    }
+    const v = text
+      .slice(start, end)
+      .replace(/^[：:\s]+/, '')
+      .replace(/[；;，,。．\s]+$/, '')
+    if (v) out.push(v)
+  }
+  return out
+}
+
+/** 税号三态判定：true = 严格出现（所在字母数字段恰为我校税号，或以我校税号开头——数电票购买方与销售方税号相邻）；false = 出现但严格不符；null = 未出现 */
+function taxIdState(norm) {
+  let sawAny = false
+  let exact = false
+  const runRe = /[0-9A-Za-z]{10,}/g
+  let m
+  while ((m = runRe.exec(norm))) {
+    if (!m[0].includes(TAX_ID)) continue
+    sawAny = true
+    if (m[0] === TAX_ID || m[0].startsWith(TAX_ID)) exact = true
+  }
+  if (!sawAny) return null
+  return exact
+}
+
+/** 购买方（发票抬头）名称值：数电 / 增值税票取「购买方」至「销售方」区段；无结构时取全文「名称：」值 */
+function buyerNameValues(norm) {
+  const b = norm.indexOf('购买方')
+  const s = norm.indexOf('销售方')
+  const section = b !== -1 ? norm.slice(b, s !== -1 && s > b ? s : undefined) : norm
+  return nameValuesIn(section)
+}
+
 export function invoiceHeaderCheck(slotId, slotName, fileName, text) {
   if (!INVOICE_HEADER_SLOTS.includes(slotId)) return null
   const norm = (text || '').replace(/\s+/g, '')
   const hay = `${slotName || ''} ${fileName || ''} ${norm}`
   if (!/发票/.test(hay)) return null
   if (norm.length < 10) return null
-  return { ok: norm.includes(SCHOOL) || norm.includes(TAX_ID) }
+  // 严格核对（用户要求）：① 名称值必须严格等于「东南大学」——多字（校区 / 附属）或少字都不过；
+  // ② 税号出现时必须与我们完全一致（不允许被更长编号包含）；文本层缺名称值时以税号严格匹配兜底。
+  const names = buyerNameValues(norm)
+  const tax = taxIdState(norm)
+  let ok
+  if (names.length) {
+    ok = names.some((v) => v === SCHOOL) && tax !== false
+  } else {
+    ok = tax === true
+  }
+  return { ok }
 }
 
 /**
