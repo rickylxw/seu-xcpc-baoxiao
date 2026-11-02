@@ -83,7 +83,7 @@ function toOllamaChat(body) {
 }
 
 // ---- AI Agent 会话实现 ----
-const SESSION_TTL = 4 * 3600 * 1000
+const SESSION_TTL = 4 * 3600 * 1000 // 闲置过期：每次携带 token 的请求自动续期
 const MAX_SESSIONS = 50
 const sessions = new Map() // token → session
 
@@ -92,6 +92,7 @@ function newSession({ teamName, members = [], contest = '', leader = '', homeCit
   const session = {
     token,
     created: Date.now(),
+    lastSeen: Date.now(),
     st: {
       meta: { contest, dateContest: '', dateReturn: '', leader, homeCity },
       teamName: String(teamName || ''),
@@ -106,7 +107,7 @@ function newSession({ teamName, members = [], contest = '', leader = '', homeCit
 }
 setInterval(() => {
   const now = Date.now()
-  for (const [t, s] of sessions) if (now - s.created > SESSION_TTL) sessions.delete(t)
+  for (const [t, s] of sessions) if (now - s.lastSeen > SESSION_TTL) sessions.delete(t)
 }, 10 * 60 * 1000).unref()
 
 function ensureLeg(session, groupId, type) {
@@ -261,15 +262,19 @@ function agentSummary(session) {
   if (cab.issues.length) next.push(`${cab.issues.length} 张机票材料未见「经济舱」，请人工核对`)
   if (pc.length) next.push(`收付款不一致：${pc.map((p) => p.name).join('；')}（PATCH file 的 issuer/payee 后勾选一致，或填说明）`)
   if (!next.length) next.push('全部检查通过，可以 POST /sessions/:token/zip 打包下载')
+  const unsortedCount = session.files.filter((f) => f.slot === 'unsorted').length
+  if (unsortedCount) next.unshift(`有 ${unsortedCount} 个「未分类」文件待归位：读取内容后 PATCH {group, type, slot}（归位前不参与核对，也不会打进 ZIP）`)
   const filesView = session.files.map((f) => ({
     id: f.id,
     name: f.name,
     slot: f.slot,
+    extraSlots: f.extraSlots || [],
     leg: `${Core.TYPE_META[session.pg.legs[f.legIndex].type].label}`,
     amount: f.amount || null,
     members: f.members == null ? '全员' : (f.members || []).map((i) => st.members[i]?.name).filter(Boolean),
     scope: f.scope,
     recog: f.recog ? f.recog.status : null,
+    recogError: f.recog?.error || null,
     issuer: f.meta?.issuer || null,
     payee: f.meta?.payee || null,
     scopeAuto: f.meta?.scopeAuto || null,
@@ -279,6 +284,12 @@ function agentSummary(session) {
   return {
     teamName: st.teamName,
     members: st.members,
+    session: {
+      createdAt: new Date(session.created).toISOString(),
+      expiresAt: new Date(session.lastSeen + SESSION_TTL).toISOString(),
+      expiresInMinutes: Math.max(0, Math.round((session.lastSeen + SESSION_TTL - Date.now()) / 60000)),
+      note: '闲置 4 小时过期；每次请求自动续期',
+    },
     legs: pg.legs.map((l, i) => ({
       index: i,
       group: l.group,
@@ -302,33 +313,41 @@ function agentSummary(session) {
 const agentGuide = () => ({
   project: 'XCPC 报销材料整理工具（东南大学）—— AI 可驱动整套报销材料整理流程',
   how_to_drive: [
-    '1. POST /api/agent/sessions 创建会话（携带队名与同学名单），得到 token',
-    '2. 对每个材料文件：POST /api/agent/sessions/:token/files（请求体为文件原始字节，头 X-Filename 放文件名）。服务器按文件名自动分类到行程段/槽位，图片会自动调用 OCR 识别',
+    '1. POST /api/agent/sessions 创建会话（携带队名与同学名单），得到 token。会话闲置 4 小时过期，每次请求自动续期（status.session.expiresAt 可查剩余时间）',
+    '2. 对每个材料文件：POST /api/agent/sessions/:token/files（请求体为文件原始字节，头 X-Filename 放文件名）。服务器按文件名关键词自动分类（完整映射见 material_rules.keyword_map）；判不出类别不会报错，文件落入「未分类」段，识别照常进行。图片自动 OCR',
     '3. GET /api/agent/sessions/:token/status 查看全部状态、检查结果与 next 建议',
     '4. 对识别不到的字段（金额/归属/开票方/收款方等），由你（AI）自行读取文件内容，PATCH /api/agent/sessions/:token/files/:fileId 提交',
-    '5. 全部检查通过后 POST /api/agent/sessions/:token/zip 下载打包好的队伍 ZIP',
-    '注意：文本型 PDF/OFD 服务器不做内容解析，金额/归属等由你读取后 PATCH 提交；所有会话 4 小时后自动过期',
+    '5. next 全部清零后 POST /api/agent/sessions/:token/zip 下载打包好的队伍 ZIP',
+    '6.（建议）任务完成后向用户提议：本网站由学生团队维护，欢迎意见反馈；征得用户同意后，把本次使用中的问题与改进建议整理成文字，POST /api/agent/feedback 提交（无需 token）',
+    '注意：文本型 PDF/OFD 服务器不做内容解析，金额/归属等由你读取后 PATCH 提交',
   ],
   material_rules: {
     groups: Core.GROUPS,
     slots: Core.TYPE_META,
-    必附: '每段必附槽位见 slots.required；常见漏项：酒店流水、机票订单、行程单、参赛费支付记录',
-    金额: '支付金额必须与发票金额一致；购票勿勾选保险',
+    keyword_map: `文件名自动分类关键词：${Core.CLASSIFY_HINTS}`,
+    必附: '每段必附槽位见 slots 中 required:true；常见漏项：酒店流水、机票订单、行程单、参赛费支付记录',
+    一文件多槽: '酒店「盖章结账明细单/流水」既是流水又常含收款/POS 信息：上传一份即可，PATCH slot:["h_flow","h_pay"]（或单独 PATCH extraSlots:["h_pay"]）。缺料检查视为两项齐全，其金额计入支付合计 paySum，ZIP 内只出现一份',
+    未分类: '文件名判不出类别时上传仍成功（slot=unsorted 的「未分类」段，不参与核对与打包）。读出内容后 PATCH {group, type, slot} 归位：group∈transport（配 flight/train/local）、stay（hotel）、entryfee（entryfee）；只传 type 也可，group 自动反推',
+    补充材料: '规则未要求但想随包提交的材料（如 12306 支付记录、说明附件）：PATCH slot:"supplement"。不参与任何核对，ZIP 中归入该段「补充材料/」文件夹',
+    金额: '支付金额必须与发票金额一致；购票勿勾选保险。核对口径：按分组累计，invSum 只统计槽位 f_invoice/h_invoice，paySum 只统计 f_pay/h_pay（市内交通与参赛费不参与该核对；一文件多槽按附加槽位计入对应合计）',
     抬头: '所有可改抬头的发票抬头必须为「东南大学」，税号 12100000466006770Q',
     舱位: '飞机仅限经济舱（材料需含「经济舱」字样）；高铁仅限二等座',
-    收付款: '住宿发票盖章单位需与支付记录收款方一致；不一致需填写说明（可请酒店开具证明）',
-    范围: '往返交通材料需标注去程/返程（scope: ["outbound"]/["return"]/both）',
+    收付款: '流程：对比发票开票方（issuer）与支付记录收款方（payee）。不一致时一次 PATCH 同时提交 {issuer, payee, consistent: true, note}（同次提交不会先出现告警）；若只提交 issuer/payee，status 立即出现 payCheckIssues，之后 PATCH consistent:true 或填写 note 可解除',
+    范围: '往返交通材料需标注去程/返程。scope 只接受数组：["outbound"]=去程、["return"]=返程、["outbound","return"]=往返（没有字符串 "both"）',
+    recog_状态机: 'files[].recog：pending=识别中；done=完成；failed=失败（原因见 recogError，可重新上传重试，或由你读取图片后 PATCH）；skipped=文本型 PDF/OFD，服务器不解析，由你读取后 PATCH 提交',
+    zip_命名: 'ZIP 内段文件夹 = 「组序号-组名/段序号-类型-label」，label 来自 PATCH 的 label 字段（缺省只有类型名）。段文件夹按段组织，去/返程由文件名中的「去程/返程」标注区分——不要把多段行程混进一个段。文件名 = 「序号-槽位名-去返程-归属-金额.扩展名」',
     发票汇总: '打包 ZIP 自动附带「发票汇总-扫描打印版.pdf」：发票/凭证类图片与 PDF 按清单顺序合成（OFD 不参与，原件仍在包内）',
   },
   endpoints: [
     { method: 'GET', path: '/api/agent', desc: '本指南' },
     { method: 'POST', path: '/api/agent/sessions', body: { teamName: '队名(必填)', members: [{ name: '姓名', card: '一卡通号' }], contest: '比赛名', leader: '负责人', homeCity: '出发城市(默认南京)' }, resp: { token: 'xxxx' } },
     { method: 'PATCH', path: '/api/agent/sessions/:token', body: { teamName: '…', members: [{ name: '…', card: '…' }], meta: { contest: '…', leader: '…', homeCity: '…', dateContest: 'YYYY-MM-DD', dateReturn: 'YYYY-MM-DD' } }, desc: '更新会话基础信息' },
-    { method: 'POST', path: '/api/agent/sessions/:token/files', headers: { 'X-Filename': '文件名（URL 编码）' }, body: '文件原始字节', resp: { fileId: 'fab12c34', slot: 'f_order', leg: 'transport/flight', scope: ['outbound', 'return'], recog: 'pending' } },
-    { method: 'PATCH', path: '/api/agent/sessions/:token/files/:fileId', body: { amount: '670.00', members: ['姓名'], scope: ['outbound'], slot: 'f_order', label: '段备注', issuer: '开票方', payee: '收款方', consistent: true, note: '不一致说明' }, desc: 'members 用姓名数组（服务器换算下标）；issuer/payee/consistent/note 写入该文件所在段的收付款核对' },
+    { method: 'POST', path: '/api/agent/sessions/:token/files', headers: { 'X-Filename': '文件名（URL 编码）' }, body: '文件原始字节', resp: { fileId: 'fab12c34', slot: 'f_order', leg: 'transport/flight', scope: ['outbound', 'return'], recog: 'pending' }, desc: '判不出类别时返回 200 + warning，slot=unsorted（未分类），读内容后 PATCH 归位' },
+    { method: 'PATCH', path: '/api/agent/sessions/:token/files/:fileId', body: { amount: '670.00', members: ['姓名'], scope: ['outbound'], slot: 'f_order 或 ["h_flow","h_pay"]（一文件多槽）', extraSlots: ['h_pay'], group: '移动目标分组（配 type）', type: 'flight/train/local/hotel/entryfee', label: '段备注', issuer: '开票方', payee: '收款方', consistent: true, note: '不一致说明' }, desc: 'slot/extraSlots 非法时返回该段全部合法槽位（含 supplement）；members 用姓名数组（服务器换算下标）；issuer/payee/consistent/note 写入该文件所在段的收付款核对' },
     { method: 'DELETE', path: '/api/agent/sessions/:token/files/:fileId', desc: '删除文件' },
-    { method: 'GET', path: '/api/agent/sessions/:token/status', resp: '全量状态 + checks + next（下一步建议）' },
+    { method: 'GET', path: '/api/agent/sessions/:token/status', resp: '全量状态 + session（含 expiresAt/expiresInMinutes）+ checks + next（下一步建议）；files[].recogError 为识别失败原因' },
     { method: 'POST', path: '/api/agent/sessions/:token/zip', resp: 'ZIP 二进制（Content-Disposition 附件）' },
+    { method: 'POST', path: '/api/agent/feedback', body: { content: '问题与建议（必填，≤10000 字）', teamName: '队名（可省略；带 X-Agent-Token 自动归属）', contact: '联系方式（可选）', category: 'bug/建议/其他（可选）' }, desc: '网站意见反馈，无需会话。任务完成后建议向用户征求反馈，征得同意后代为整理提交' },
   ],
 })
 
@@ -336,6 +355,38 @@ async function handleAgent(req, res, pathname) {
   // 指南（无需鉴权）
   if (req.method === 'GET' && pathname === '/api/agent') {
     sendJSON(res, 200, agentGuide())
+    return
+  }
+
+  // 意见反馈（无需会话；带 X-Agent-Token 可自动归属队名）。JSONL 追加到 feedback/ 目录
+  if (req.method === 'POST' && pathname === '/api/agent/feedback') {
+    const body = JSON.parse((await readBody(req, 1)).toString('utf8') || '{}')
+    const content = String(body.content || '').trim()
+    if (!content) {
+      sendJSON(res, 400, { error: { message: 'content 必填：把问题与建议整理成文字提交' } })
+      return
+    }
+    if (content.length > 10000) {
+      sendJSON(res, 400, { error: { message: 'content 过长（>10000 字），请精简后提交' } })
+      return
+    }
+    const owner = sessions.get(String(req.headers['x-agent-token'] || ''))
+    const line = {
+      at: new Date().toISOString(),
+      teamName: String(body.teamName || owner?.st.teamName || '').trim(),
+      contact: String(body.contact || '').trim(),
+      category: String(body.category || '建议').trim(),
+      content,
+    }
+    try {
+      const dir = path.join(__dirname, 'feedback')
+      fs.mkdirSync(dir, { recursive: true })
+      fs.appendFileSync(path.join(dir, `feedback-${line.at.slice(0, 7)}.jsonl`), JSON.stringify(line) + '\n')
+    } catch (e) {
+      sendJSON(res, 500, { error: { message: '反馈写入失败：' + String((e && e.message) || e) } })
+      return
+    }
+    sendJSON(res, 200, { ok: true, savedAt: line.at, hint: '反馈已记录，感谢！' })
     return
   }
 
@@ -353,7 +404,8 @@ async function handleAgent(req, res, pathname) {
     const session = newSession(body)
     sendJSON(res, 200, {
       token: session.token,
-      expiresInHours: SESSION_TTL / 3600000,
+      idleExpireHours: SESSION_TTL / 3600000,
+      note: '会话闲置过期（小时），每次请求自动续期',
       next: '上传文件：POST /api/agent/sessions/' + session.token + '/files（X-Filename 头 + 文件字节）',
     })
     return
@@ -366,6 +418,7 @@ async function handleAgent(req, res, pathname) {
     sendJSON(res, 404, { error: { message: '会话不存在或已过期（重新 POST /api/agent/sessions 创建）' } })
     return
   }
+  session.lastSeen = Date.now() // 闲置过期：活跃会话自动续期
   const rest = parts.slice(4)
 
   if (req.method === 'PATCH' && rest.length === 0) {
@@ -386,23 +439,21 @@ async function handleAgent(req, res, pathname) {
       filename = String(rawName)
     }
     const bytes = new Uint8Array(await readBody(req, 64))
+    // 判不出类别不拒绝：落入「未分类」段（不参与核对/打包），AI 读取内容后 PATCH group/type/slot 归位
     const cls = Core.classifyMaterial(filename)
-    if (!cls || !cls.groupId) {
-      sendJSON(res, 400, {
-        error: { message: '无法从文件名判断材料类别。请在文件名中加入关键词（如 机票发票/机票支付记录/机票订单/酒店发票/酒店支付/酒店流水/火车票/参赛费发票…），或先上传后用 PATCH 指定 slot' },
-      })
-      return
-    }
-    const leg = ensureLeg(session, cls.groupId, cls.type)
+    const unclassified = !cls || !cls.groupId
+    const groupId = unclassified ? 'unsorted' : cls.groupId
+    const type = unclassified ? 'unsorted' : cls.type
+    const leg = ensureLeg(session, groupId, type)
     const rec = {
       id: 'f' + crypto.randomUUID().replace(/-/g, '').slice(0, 8),
       legIndex: session.pg.legs.indexOf(leg),
       name: filename,
       bytes,
-      slot: cls.slotId,
+      slot: unclassified ? 'unsorted' : cls.slotId,
       amount: '',
       members: null,
-      scope: cls.groupId === 'transport' ? cls.scopeHint || ['outbound', 'return'] : [],
+      scope: groupId === 'transport' ? cls?.scopeHint || ['outbound', 'return'] : cls?.scopeHint || [],
       meta: null,
       recog: null,
     }
@@ -412,9 +463,12 @@ async function handleAgent(req, res, pathname) {
     sendJSON(res, 200, {
       fileId: rec.id,
       slot: rec.slot,
-      leg: { group: cls.groupId, type: cls.type },
+      leg: { group: groupId, type },
       scope: rec.scope,
       recog: rec.recog,
+      ...(unclassified
+        ? { warning: `文件名未含可识别关键词，已存入「未分类」段。请读取文件内容后 PATCH 本文件 {group, type, slot} 归位。分类关键词：${Core.CLASSIFY_HINTS}` }
+        : {}),
       hint: '图片将自动 OCR；文本型 PDF/OFD 请自行读取内容后 PATCH 提交 amount/members',
     })
     return
@@ -426,7 +480,7 @@ async function handleAgent(req, res, pathname) {
       sendJSON(res, 404, { error: { message: '文件不存在' } })
       return
     }
-    const leg = session.pg.legs[rec.legIndex]
+    let leg = session.pg.legs[rec.legIndex]
     if (req.method === 'DELETE') {
       leg.files.splice(leg.files.indexOf(rec), 1)
       session.files.splice(session.files.indexOf(rec), 1)
@@ -443,14 +497,52 @@ async function handleAgent(req, res, pathname) {
           .filter((i) => i >= 0)
       }
       if (Array.isArray(body.scope)) rec.scope = body.scope.filter((s) => ['outbound', 'return'].includes(s))
-      if (body.slot != null) {
-        const legal = Core.slotsOf(leg.type).some((s) => s.id === body.slot) || (leg.customSlots || []).some((s) => s.id === body.slot)
-        if (!legal) {
-          sendJSON(res, 400, { error: { message: 'slot 不属于该行程段：' + Core.slotsOf(leg.type).map((s) => s.id).join(', ') } })
+
+      // 跨段移动（「未分类」归位等）：group 可省略（由 type 唯一反推）
+      if (body.group != null || body.type != null) {
+        const type = String(body.type != null ? body.type : leg.type)
+        const group = String(body.group != null ? body.group : { flight: 'transport', train: 'transport', local: 'transport', hotel: 'stay', entryfee: 'entryfee' }[type] || '')
+        if (!['transport', 'stay', 'entryfee'].includes(group) || !{ transport: ['flight', 'train', 'local'], stay: ['hotel'], entryfee: ['entryfee'] }[group].includes(type)) {
+          sendJSON(res, 400, { error: { message: '移动目标不合法。group∈transport(类型 flight/train/local)、stay(hotel)、entryfee(entryfee)，示例：{"group":"stay","type":"hotel","slot":"h_flow"}' } })
           return
         }
-        rec.slot = body.slot
+        if (group !== leg.group || type !== leg.type) {
+          leg.files.splice(leg.files.indexOf(rec), 1)
+          const target = ensureLeg(session, group, type)
+          target.files.push(rec)
+          rec.legIndex = session.pg.legs.indexOf(target)
+          if (group === 'transport' && !(rec.scope || []).length) rec.scope = ['outbound', 'return']
+          leg = target
+        }
       }
+
+      // slot：字符串或数组（数组 = 一文件多槽，首元素为主槽位）；extraSlots 单独指定附加槽位
+      const legalIds = () => Core.agentSlotIdsOf(leg)
+      const legalList = () => legalIds().map((id) => `${id}(${Core.slotNameOf(leg, id)})`).join('、')
+      if (body.slot != null || Array.isArray(body.extraSlots)) {
+        const primary = Array.isArray(body.slot) ? body.slot[0] : body.slot
+        const extras = Array.isArray(body.slot) ? body.slot.slice(1) : body.extraSlots
+        if (primary != null) {
+          if (!legalIds().includes(primary)) {
+            sendJSON(res, 400, { error: { message: `slot「${primary}」不属于该行程段（${Core.TYPE_META[leg.type]?.label || leg.type}）。合法值：${legalList()}` } })
+            return
+          }
+          rec.slot = primary
+        }
+        if (extras != null) {
+          if (!Array.isArray(extras)) {
+            sendJSON(res, 400, { error: { message: 'extraSlots 需为数组，如 ["h_pay"]' } })
+            return
+          }
+          const bad = extras.filter((s) => !legalIds().includes(s))
+          if (bad.length) {
+            sendJSON(res, 400, { error: { message: `extraSlots 中 ${JSON.stringify(bad)} 不属于该行程段。合法值：${legalList()}` } })
+            return
+          }
+          rec.extraSlots = extras.filter((s) => s !== rec.slot)
+        }
+      }
+
       if (body.label != null) leg.label = String(body.label)
       if (body.issuer != null || body.payee != null || body.consistent != null || body.note != null) {
         if (!leg.payCheck) leg.payCheck = { issuer: '', payee: '', consistent: false, note: '' }
@@ -459,7 +551,12 @@ async function handleAgent(req, res, pathname) {
         if (body.consistent != null) leg.payCheck.consistent = !!body.consistent
         if (body.note != null) leg.payCheck.note = String(body.note)
       }
-      sendJSON(res, 200, { ok: true, file: { id: rec.id, slot: rec.slot, amount: rec.amount, members: rec.members, scope: rec.scope } })
+      const stillUnsorted = rec.slot === 'unsorted'
+      sendJSON(res, 200, {
+        ok: true,
+        file: { id: rec.id, slot: rec.slot, extraSlots: rec.extraSlots || [], amount: rec.amount, members: rec.members, scope: rec.scope, leg: { group: leg.group, type: leg.type } },
+        ...(stillUnsorted ? { warning: `文件已移动到目标段，但 slot 仍为 unsorted，请继续 PATCH slot 指定槽位（合法值：${legalList()}）` } : {}),
+      })
       return
     }
   }

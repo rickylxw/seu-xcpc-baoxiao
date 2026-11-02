@@ -40,7 +40,7 @@ const TOOLS = [
   },
   {
     name: 'create_session',
-    description: '创建报销会话（一个队一个会话），返回 token。之后所有工具自动使用该 token。',
+    description: '创建报销会话（一个队一个会话），返回 token。之后所有工具自动使用该 token。会话闲置 4 小时过期，每次调用自动续期。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -56,7 +56,7 @@ const TOOLS = [
   {
     name: 'upload_file',
     description:
-      '上传一个本地材料文件（发票/支付记录/订单行程单等图片或 PDF/OFD）。服务器按文件名自动分类到行程段与槽位，图片自动 OCR。文件名最好含关键词（如 机票发票/机票支付记录/酒店发票/酒店流水/去程）。',
+      '上传一个本地材料文件（发票/支付记录/订单行程单等图片或 PDF/OFD）。服务器按文件名关键词自动分类到行程段与槽位（完整关键词映射见 agent_guide 的 keyword_map），图片自动 OCR。判不出类别不会报错：文件落入「未分类」段，读出内容后用 update_file 的 group/type/slot 归位。',
     inputSchema: {
       type: 'object',
       properties: { path: { type: 'string', description: '本地文件绝对路径' } },
@@ -66,7 +66,7 @@ const TOOLS = [
   {
     name: 'update_file',
     description:
-      '更新已上传文件的字段：amount（金额）、members（归属同学姓名数组）、scope（["outbound"]/["return"]/both）、slot（改槽位）、label；以及 issuer（发票开票方）、payee（支付收款方）、consistent（收付款是否一致）、note（不一致说明）。服务器识别不到的内容由你读取文件后提交。',
+      '更新已上传文件的字段：amount（金额）、members（归属同学姓名数组）、scope（["outbound"]/["return"]/["outbound","return"]）、slot（槽位，可传数组实现一文件多槽，如 ["h_flow","h_pay"]）、extraSlots（附加槽位）、group/type（把「未分类」文件移动到目标行程段）、label；以及 issuer（发票开票方）、payee（支付收款方）、consistent（收付款是否一致）、note（不一致说明）。服务器识别不到的内容由你读取文件后提交；超额材料用 slot:"supplement"（归入 ZIP 的「补充材料」文件夹，不参与核对）。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -74,7 +74,11 @@ const TOOLS = [
         amount: { type: 'string' },
         members: { type: 'array', items: { type: 'string' } },
         scope: { type: 'array', items: { type: 'string', enum: ['outbound', 'return'] } },
-        slot: { type: 'string' },
+        slot: { description: '槽位 id，或槽位 id 数组（一文件多槽，首元素为主槽位）' },
+        extraSlots: { type: 'array', items: { type: 'string' }, description: '附加槽位（如盖章结账流水主槽 h_flow 附加 h_pay）' },
+        group: { type: 'string', enum: ['transport', 'stay', 'entryfee'], description: '移动目标分组（配 type，用于「未分类」归位）' },
+        type: { type: 'string', enum: ['flight', 'train', 'local', 'hotel', 'entryfee'], description: '移动目标行程类型' },
+        label: { type: 'string' },
         issuer: { type: 'string' },
         payee: { type: 'string' },
         consistent: { type: 'boolean' },
@@ -85,7 +89,7 @@ const TOOLS = [
   },
   {
     name: 'get_status',
-    description: '获取会话全量状态：每个文件的识别/核对情况、缺漏检查结果、下一步建议（next 数组）。每完成一步都应调用确认。',
+    description: '获取会话全量状态：每个文件的识别/核对情况（recogError 为识别失败原因）、缺漏检查结果、下一步建议（next 数组）、会话剩余时间（session.expiresAt）。每完成一步都应调用确认。',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -107,6 +111,21 @@ const TOOLS = [
       type: 'object',
       properties: { savePath: { type: 'string', description: '保存到的本地路径（如 ./队长队-报销材料.zip）' } },
       required: ['savePath'],
+    },
+  },
+  {
+    name: 'submit_feedback',
+    description:
+      '向网站提交使用意见反馈（无需会话）。使用时机：任务完成后向用户提议「本网站欢迎意见反馈」，征得用户同意后，把本次使用中遇到的问题与改进建议整理成 content 提交；用户不同意则不要调用。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: '整理好的问题与建议（必填）' },
+        teamName: { type: 'string', description: '队名（可选；已有会话时自动归属）' },
+        contact: { type: 'string', description: '联系方式（可选）' },
+        category: { type: 'string', description: '分类：bug/建议/其他（可选）' },
+      },
+      required: ['content'],
     },
   },
 ]
@@ -154,6 +173,10 @@ async function callTool(name, args = {}) {
       const save = path.resolve(args.savePath || './报销材料.zip')
       fs.writeFileSync(save, bytes)
       return `已保存：${save}（${bytes.length} 字节）`
+    }
+    case 'submit_feedback': {
+      const { json, status } = await api('POST', '/api/agent/feedback', args)
+      return JSON.stringify({ status, ...json }, null, 2)
     }
     default:
       return `未知工具：${name}`

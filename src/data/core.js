@@ -54,11 +54,32 @@ export const TYPE_META = {
     ph: '如：10.24–10.26 ××酒店',
     slots: [
       { id: 'h_invoice', name: '住宿发票', required: true, note: '尽量含入住人、入住和离店时间' },
-      { id: 'h_pay', name: '住宿支付记录（或 POS 单）', required: true, note: '与发票金额核对；开票盖章单位需与支付对象一致（不一致可请酒店开具证明）' },
-      { id: 'h_flow', name: '住宿流水记录', required: true, note: '酒店前台开具并盖章' },
+      { id: 'h_pay', name: '住宿支付记录（或 POS 单）', required: true, note: '与发票金额核对；开票盖章单位需与支付对象一致（不一致可请酒店开具证明）；盖章结账流水含收款/POS 信息时视同满足' },
+      { id: 'h_flow', name: '住宿流水记录', required: true, note: '酒店前台开具并盖章；含收款/POS 信息的盖章结账流水可兼任支付记录（一文件多槽）' },
     ],
   },
+  /* 仅 AI Agent 会话使用：文件名判不出类别的落点，不参与任何核对与打包（网页端不会产生该段） */
+  unsorted: {
+    label: '未分类',
+    ph: '',
+    slots: [{ id: 'unsorted', name: '未分类材料', required: false, note: '文件名不含可识别关键词；读取内容后 PATCH group/type/slot 归位' }],
+  },
 }
+
+/** 文件名分类关键词映射（与 classifyMaterial 保持一致；agent_guide 与上传警告共用） */
+export const CLASSIFY_HINTS = [
+  '邀请函 → 参赛费·邀请函',
+  '报名费/参赛费/注册费/赛站 → 参赛费（文件名含「支付/付款/账单/扣款」→ 支付记录，否则 → 发票）',
+  '酒店/住宿/宾馆/民宿/水单 → 住宿（含「发票/开票」→ 住宿发票；含「流水/水单」→ 住宿流水；其余 → 住宿支付记录）',
+  '火车/高铁/动车/铁路/12306/车票 → 高铁·车票报销凭证',
+  '机票/航空/航班/客票/行程单/登机/值机 → 飞机（含「发票/开票/行程单」→ 机票发票；含「支付/付款/账单/扣款」→ 机票支付记录；其余 → 机票订单）',
+  '出租/滴滴/网约车/打车/高德/地铁/公交/市内 → 市内交通（含「发票/开票」→ 发票，其余 → 支付记录）',
+  '文件名含「去程/返程/回程」自动标注去程/返程',
+].join('；')
+
+/** AI Agent 专用虚拟槽位：超额/说明性材料，不参与核对，ZIP 归入该段「补充材料」文件夹 */
+export const SUPPLEMENT_SLOT = 'supplement'
+export const SUPPLEMENT_SLOT_NAME = '补充材料'
 
 export const slotsOf = (type) => (TYPE_META[type] || TYPE_META.entryfee).slots
 
@@ -232,9 +253,21 @@ export function routeScopeCheck(text, homeCity, destCity) {
 /* ---------- 基于 (st, pg) 的检查 ---------- */
 
 export function slotNameOf(leg, slotId) {
+  if (slotId === SUPPLEMENT_SLOT) return SUPPLEMENT_SLOT_NAME
   const slots = slotsOf(leg.type)
   return (slots.find((s) => s.id === slotId) || {}).name || slotId
 }
+
+/** 该行程段允许的槽位（预设 + 补充材料 + 自定义），供 Agent PATCH 校验与报错提示 */
+export function agentSlotIdsOf(leg) {
+  const ids = slotsOf(leg.type).map((s) => s.id)
+  if (leg.group !== 'unsorted') ids.push(SUPPLEMENT_SLOT)
+  for (const cs of leg.customSlots || []) ids.push(cs.id)
+  return ids
+}
+
+/** 一文件多槽：主槽位之外的附加槽位（如盖章结账流水主槽 h_flow、附加 h_pay） */
+export const extraSlotsOf = (f) => (Array.isArray(f.extraSlots) ? f.extraSlots : [])
 
 export function memberNamesOfIdx(st, memberIdx) {
   if (memberIdx == null) return { all: true, names: [] }
@@ -246,7 +279,7 @@ export function missingRequiredCore(st, pg) {
   for (const leg of pg.legs) {
     for (const slot of slotsOf(leg.type)) {
       if (!slot.required) continue
-      if (!leg.files.some((f) => f.slot === slot.id)) out.push({ leg, slot })
+      if (!leg.files.some((f) => f.slot === slot.id || extraSlotsOf(f).includes(slot.id))) out.push({ leg, slot })
     }
   }
   return out
@@ -325,10 +358,11 @@ export function amountCheckCore(st, pg) {
       for (const f of leg.files) {
         const v = parseAmount(f.amount)
         if (v == null) continue
-        if (f.slot === 'f_invoice' || f.slot === 'h_invoice') {
+        const slots = [f.slot, ...extraSlotsOf(f)]
+        if (slots.includes('f_invoice') || slots.includes('h_invoice')) {
           invSum += v
           invCount++
-        } else if (f.slot === 'f_pay' || f.slot === 'h_pay') {
+        } else if (slots.includes('f_pay') || slots.includes('h_pay')) {
           paySum += v
           payCount++
         }
@@ -357,7 +391,9 @@ export function payCheckIssuesCore(pg) {
       const pc = leg.payCheck
       if (!pc || (!pc.issuer && !pc.payee) || pc.consistent) continue
       const invSlotIds = slotsOf(leg.type).filter((s) => /发票/.test(s.name)).map((s) => s.id)
-      const invFiles = invSlotIds.length ? leg.files.filter((f) => invSlotIds.includes(f.slot)) : []
+      const invFiles = invSlotIds.length
+        ? leg.files.filter((f) => invSlotIds.includes(f.slot) || extraSlotsOf(f).some((s) => invSlotIds.includes(s)))
+        : []
       const amounts = invFiles.map((f) => parseAmount(f.amount)).filter((v) => v != null)
       out.push({
         name: `${TYPE_META[leg.type] ? TYPE_META[leg.type].label : ''}${leg.label ? ' ' + leg.label : ''}`,
@@ -391,13 +427,16 @@ export function zipManifest(st, pg) {
         `${String(gi + 1).padStart(2, '0')}-${g.name}/` +
         `${String(li + 1).padStart(2, '0')}-${TYPE_META[leg.type].label}${leg.label ? '-' + sanitizeName(leg.label) : ''}`
       ;(leg.files || []).forEach((f, fi) => {
+        if (f.slot === 'unsorted') return // 未归位材料不进正式 ZIP（status 的 next 会提醒）
         const scope = g.id === 'transport' ? `-${scopeLabelOf(f.scope)}` : ''
         const { names } = memberNamesOfIdx(st, f.members)
         const members = f.members == null ? '全体' : names.join('-') || '未归属'
         const amt = f.amount ? `-¥${parseAmount(f.amount)}` : ''
         const name = f.file?.name || f.name || ''
         const fname = `${String(fi + 1).padStart(2, '0')}-${slotNameOf(leg, f.slot)}${scope}-${members}${amt}${extOf(f)}`
-        out.push({ path: `${legDir}/${fname}`, file: f.file || f, name })
+        // 补充材料（如支付流水副本、说明附件）：归入「补充材料」子文件夹，不与必附材料混放
+        const dir = f.slot === SUPPLEMENT_SLOT ? `${legDir}/${SUPPLEMENT_SLOT_NAME}` : legDir
+        out.push({ path: `${dir}/${fname}`, file: f.file || f, name })
       })
     })
   })

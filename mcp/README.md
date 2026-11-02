@@ -48,17 +48,21 @@
 
 | 工具 | 用途 |
 | --- | --- |
-| `agent_guide` | 完整指南（工作流 / 接口 / 材料规则），开始前必读 |
+| `agent_guide` | 完整指南（工作流 / 接口 / 材料规则 / 关键词映射表），开始前必读 |
 | `create_session` | 创建会话（队名 + 同学名单），返回 token |
-| `upload_file` | 上传本地材料文件，自动分类到行程段/槽位，图片自动 OCR |
-| `update_file` | 补金额、归属、去返程、开票方/收款方、不一致说明等 |
-| `get_status` | 全量状态 + 缺漏检查 + 下一步建议 |
+| `upload_file` | 上传本地材料文件，按文件名关键词自动分类，图片自动 OCR；判不出类别落入「未分类」，不报错 |
+| `update_file` | 补金额、归属、去返程、开票方/收款方、不一致说明等；支持一文件多槽（盖章结账流水 = h_flow + h_pay）、「未分类」归位（group/type）、补充材料（slot: supplement） |
+| `get_status` | 全量状态 + 缺漏检查 + 下一步建议 + 会话剩余时间 |
 | `set_team_info` | 更新队名 / 名单 / 比赛信息 |
 | `download_zip` | 打包并保存队伍 ZIP |
+| `submit_feedback` | 向网站提交使用意见反馈（先征得用户同意再调用） |
 
 ## 说明
 
-- 会话在服务器内存中保留 4 小时，过期需重建。
+- 会话闲置 4 小时过期（每次调用自动续期），`get_status` 可查 `session.expiresAt`；过期需重建。
 - 图片材料自动走服务器 Ollama 识别；文本型 PDF/OFD 的金额归属由 AI 自行读取文件后经 `update_file` 提交。
+- 酒店盖章结账流水含收款/POS 信息时传一份即可：`update_file` 的 `slot: ["h_flow","h_pay"]`（一文件多槽），金额计入支付合计，ZIP 只出现一份。
+- 规则外的材料（如 12306 支付记录）用 `slot: "supplement"`：不参与核对，ZIP 归入该段「补充材料」文件夹。
 - 打包 ZIP 自动附带「发票汇总-扫描打印版.pdf」（发票/凭证类图片与 PDF 合成；OFD 不参与，原件仍在包内），需要服务器 node_modules 里有 pdf-lib 及其依赖（@pdf-lib/standard-fonts、@pdf-lib/upng、pako、tslib）。
 - 差旅审批单是负责人文件，不在队伍 ZIP 内（网页端随赛站汇总提交）。
+- 网站由学生团队维护、持续迭代：AI 完成任务后应向用户征求使用意见，征得同意后经 `submit_feedback` 提交（服务器记录在 `feedback/` 目录）。
