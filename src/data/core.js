@@ -176,8 +176,8 @@ export function detectMembers(text, members) {
     .filter((m) => m.name && norm.includes(m.name))
 }
 
-/** 需要做发票抬头检查的槽位（支付记录、行程单、车票凭证等一律不查抬头） */
-export const INVOICE_HEADER_SLOTS = ['f_invoice', 'h_invoice', 'l_invoice', 'fee_invoice']
+/** 需要做发票抬头检查的槽位（含 t_voucher：12306 电子发票（铁路电子客票）自带购买方抬头；老式纯车票无「发票」字样自然跳过） */
+export const INVOICE_HEADER_SLOTS = ['f_invoice', 'h_invoice', 'l_invoice', 'fee_invoice', 't_voucher']
 
 /** 支付类槽位（做收款方提取，供收付款核对） */
 export const PAY_PARTY_SLOTS = ['f_pay', 'h_pay', 'l_pay', 'fee_pay']
@@ -227,19 +227,26 @@ function nameValuesIn(text) {
   return out
 }
 
-/** 税号三态判定：true = 严格出现（所在字母数字段恰为我校税号，或以我校税号开头——数电票购买方与销售方税号相邻）；false = 出现但严格不符；null = 未出现 */
-function taxIdState(norm) {
-  let sawAny = false
-  let exact = false
-  const runRe = /[0-9A-Za-z]{10,}/g
+/** 税号三态判定：'pass' = 出现且严格为我税号（所在字母数字段恰为税号，或以税号开头——数电票购买/销售方税号相邻）；'fail' = 出现了明确的他人税号；null = 未出现 */
+function taxJudgment(norm) {
+  const labeled = []
+  const lre = /(?:统一社会信用代码|纳税人识别号|税号)\s*[:：]?\s*([0-9A-Za-z]{12,30})/g
   let m
+  while ((m = lre.exec(norm))) {
+    const run = m[1]
+    if (run.includes(TAX_ID)) {
+      if (run === TAX_ID || run.startsWith(TAX_ID)) labeled.push(true)
+    } else labeled.push(false)
+  }
+  if (labeled.length) return labeled.some(Boolean) ? 'pass' : 'fail'
+  // 无标签：全文按字母数字段判定（含我校税号的最大段，恰为税号或以税号开头 → 通过）
+  const runRe = /[0-9A-Za-z]{10,}/g
   while ((m = runRe.exec(norm))) {
     if (!m[0].includes(TAX_ID)) continue
-    sawAny = true
-    if (m[0] === TAX_ID || m[0].startsWith(TAX_ID)) exact = true
+    if (m[0] === TAX_ID || m[0].startsWith(TAX_ID)) return 'pass'
+    return 'fail'
   }
-  if (!sawAny) return null
-  return exact
+  return null
 }
 
 /** 购买方（发票抬头）名称值：数电 / 增值税票取「购买方」至「销售方」区段；无结构时取全文「名称：」值 */
@@ -257,14 +264,14 @@ export function invoiceHeaderCheck(slotId, slotName, fileName, text) {
   if (!/发票/.test(hay)) return null
   if (norm.length < 10) return null
   // 严格核对（用户要求）：① 名称值必须严格等于「东南大学」——多字（校区 / 附属）或少字都不过；
-  // ② 税号出现时必须与我们完全一致（不允许被更长编号包含）；文本层缺名称值时以税号严格匹配兜底。
+  // ② 税号出现时必须与我们完全一致（出现他人税号即拒）；文本层缺名称值时以税号判定兜底。
   const names = buyerNameValues(norm)
-  const tax = taxIdState(norm)
+  const tax = taxJudgment(norm)
   let ok
   if (names.length) {
-    ok = names.some((v) => v === SCHOOL) && tax !== false
+    ok = names.some((v) => v === SCHOOL) && tax !== 'fail'
   } else {
-    ok = tax === true
+    ok = tax === 'pass'
   }
   return { ok }
 }
