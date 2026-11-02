@@ -47,6 +47,7 @@ export const TYPE_META = {
     slots: [
       { id: 'l_invoice', name: '发票', required: true },
       { id: 'l_pay', name: '支付记录', required: true },
+      { id: 'l_order', name: '行程单', required: false, note: '打车 / 网约车需附行程单（对照起终点与金额）；地铁公交无行程单可不附' },
     ],
   },
   hotel: {
@@ -125,6 +126,13 @@ export function classifyMaterial(name, path = '') {
     const slotId = inv ? 'h_invoice' : has('流水', '水单') ? 'h_flow' : 'h_pay'
     return { groupId: 'stay', type: 'hotel', slotId, scopeHint: null }
   }
+  // 市内交通强词（含打车 / 地铁）优先于火车与飞机（「滴滴行程单」「地铁行程单」不是机票也不是火车票）
+  if (has('出租', '滴滴', '网约车', '打车', '高德', '花小猪', 'T3出行', '地铁', '公交', '市内')) {
+    const slotId = inv && !has('行程单')
+      ? 'l_invoice'
+      : has('行程单') ? 'l_order' : pay ? 'l_pay' : 'l_order'
+    return { groupId: 'transport', type: 'local', slotId, scopeHint }
+  }
   // 火车类关键词优先于「行程单」（12306 行程单也含「行程单」字样）
   if (has('火车', '高铁', '动车', '铁路', '12306', '车票')) {
     return { groupId: 'transport', type: 'train', slotId: 't_voucher', scopeHint }
@@ -132,9 +140,6 @@ export function classifyMaterial(name, path = '') {
   if (has('机票', '航空', '航班', '客票', '行程单', '登机', '值机')) {
     const slotId = inv ? 'f_invoice' : pay ? 'f_pay' : 'f_order'
     return { groupId: 'transport', type: 'flight', slotId, scopeHint }
-  }
-  if (has('出租', '滴滴', '网约车', '打车', '高德', '地铁', '公交', '市内')) {
-    return { groupId: 'transport', type: 'local', slotId: inv ? 'l_invoice' : 'l_pay', scopeHint }
   }
   // 类型判不出但范围词命中：只携带范围提示（导入预览仍默认「不导入」，手动改类型后范围自动生效）
   return scopeHint ? { groupId: null, type: null, slotId: null, scopeHint } : null

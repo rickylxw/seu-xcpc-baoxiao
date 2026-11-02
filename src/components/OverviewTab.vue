@@ -35,6 +35,10 @@ async function copyTax() {
             <span>12306 车票报销凭证（打印）；仅限二等座</span>
           </div>
           <div class="mem-mat">
+            <b>市内交通（打车 / 网约车）</b>
+            <span>发票 ＋ 支付记录截图 ＋ <b>行程单</b>（App 内开具，对照起终点与金额）；地铁公交无行程单可不附</span>
+          </div>
+          <div class="mem-mat">
             <b>住宿</b>
             <span>住宿发票（抬头开「东南大学」）＋ 支付记录 / POS 单 ＋ 酒店流水（前台盖章）</span>
           </div>
