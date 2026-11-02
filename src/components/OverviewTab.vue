@@ -36,7 +36,7 @@ async function copyTax() {
           </div>
           <div class="mem-mat">
             <b>市内交通（打车 / 网约车）</b>
-            <span>发票 ＋ 支付记录截图 ＋ <b>行程单</b>（App 内开具，对照起终点与金额）；地铁公交无行程单可不附</span>
+            <span>发票 ＋ 支付记录截图 ＋ <b>行程单</b>（对照起终点与金额）；App 开票时选「发送到邮箱」，邮件里发票和行程单一起拿；地铁公交无行程单可不附</span>
           </div>
           <div class="mem-mat">
             <b>住宿</b>

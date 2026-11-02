@@ -45,9 +45,9 @@ export const TYPE_META = {
     label: '市内交通',
     ph: '如：10.24 市内地铁/打车',
     slots: [
-      { id: 'l_invoice', name: '发票', required: true },
+      { id: 'l_invoice', name: '发票', required: true, note: '抬头「东南大学」；开票时选「发送到邮箱」，邮件里可同时拿到发票和行程单' },
       { id: 'l_pay', name: '支付记录', required: true },
-      { id: 'l_order', name: '行程单', required: false, note: '打车 / 网约车需附行程单（对照起终点与金额）；地铁公交无行程单可不附' },
+      { id: 'l_order', name: '行程单', required: false, note: '打车 / 网约车需附行程单（对照起终点与金额）；在 App 开票时选「发送到邮箱」即可同时获得发票与行程单；地铁公交无行程单可不附' },
     ],
   },
   hotel: {
