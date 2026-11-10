@@ -13,6 +13,13 @@
 import readline from 'node:readline'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// 版本号跟随仓库 package.json（找不到时回退兜底值）
+let VERSION = '2.2.0'
+try {
+  VERSION = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version
+} catch {}
 
 const BASE = (process.argv[2] || process.env.XCPC_BAOXIAO_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '')
 let token = null
@@ -201,7 +208,7 @@ rl.on('line', async (line) => {
       result: {
         protocolVersion: params?.protocolVersion || '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'xcpc-baoxiao', version: '2.0.0' },
+        serverInfo: { name: 'xcpc-baoxiao', version: VERSION },
       },
     })
     return
