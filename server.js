@@ -330,7 +330,7 @@ const agentGuide = () => ({
     未分类: '文件名判不出类别时上传仍成功（slot=unsorted 的「未分类」段，不参与核对与打包）。读出内容后 PATCH {group, type, slot} 归位：group∈transport（配 flight/train/local）、stay（hotel）、entryfee（entryfee）；只传 type 也可，group 自动反推',
     补充材料: '规则未要求但想随包提交的材料（如 12306 支付记录、说明附件）：PATCH slot:"supplement"。不参与任何核对，ZIP 中归入该段「补充材料/」文件夹',
     金额: '支付金额必须与发票金额一致；购票勿勾选保险。核对口径：按分组累计，invSum 只统计槽位 f_invoice/h_invoice，paySum 只统计 f_pay/h_pay（市内交通与参赛费不参与该核对；一文件多槽按附加槽位计入对应合计）',
-    抬头: '所有可改抬头的发票抬头必须为「东南大学」，税号 12100000466006770Q',
+    抬头: '所有可改抬头的发票抬头必须为「东南大学」（严格匹配：购买方名称须一字不差，多字如「东南大学苏州校区」、缺字均不通过），税号 12100000466006770Q 须完全一致。检查覆盖槽位 f_invoice/h_invoice/l_invoice/fee_invoice/t_voucher（12306 新版铁路电子发票自带购买方抬头会参与检查）',
     舱位: '飞机仅限经济舱（材料需含「经济舱」字样）；高铁仅限二等座',
     收付款: '流程：对比发票开票方（issuer）与支付记录收款方（payee）。不一致时一次 PATCH 同时提交 {issuer, payee, consistent: true, note}（同次提交不会先出现告警）；若只提交 issuer/payee，status 立即出现 payCheckIssues，之后 PATCH consistent:true 或填写 note 可解除',
     范围: '往返交通材料需标注去程/返程。scope 只接受数组：["outbound"]=去程、["return"]=返程、["outbound","return"]=往返（没有字符串 "both"）',
