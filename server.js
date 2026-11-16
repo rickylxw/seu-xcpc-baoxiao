@@ -89,17 +89,27 @@ const MAX_SESSIONS = 200
 const sessions = new Map() // token → session
 
 // ---- 会话持久化（反馈 2：进程重启不再丢会话）----
-// 会话对象可 JSON 序列化（bytes 存 base64）；每 5 秒把脏会话写盘，启动时加载。
+// 会话对象可 JSON 序列化（bytes 存 base64）；变更即标脏，1 秒防抖写盘（另留 30 秒兜底扫描），
+// SIGINT/SIGTERM/exit 时同步保存。lastSeen 一并持久化，重启后过期时间显示不失效。
 const SESSIONS_FILE = path.join(__dirname, 'agent-sessions.json')
 let sessionsDirty = false
+let flushTimer = null
 function markSessionsDirty() {
   sessionsDirty = true
+  if (!flushTimer) {
+    flushTimer = setTimeout(() => {
+      flushTimer = null
+      flushSessions().catch((e) => console.error('[sessions] 落盘失败:', String(e)))
+    }, 1000)
+    flushTimer.unref?.()
+  }
 }
 function serializeSessions() {
   const out = {}
   for (const [t, s] of sessions) {
     out[t] = {
       created: s.created,
+      lastSeen: s.lastSeen || s.created,
       st: s.st,
       pg: s.pg,
       files: s.files.map((f) => ({ ...f, bytes: Buffer.from(f.bytes).toString('base64') })),
@@ -108,7 +118,8 @@ function serializeSessions() {
   return JSON.stringify(out)
 }
 async function flushSessions() {
-  if (!sessions.size) return
+  if (!sessionsDirty || !sessions.size) return
+  sessionsDirty = false
   await fs.promises.writeFile(SESSIONS_FILE, serializeSessions())
 }
 function loadSessions() {
@@ -119,6 +130,7 @@ function loadSessions() {
     for (const [t, s] of Object.entries(obj)) {
       if (now - (s.lastSeen || s.created) > SESSION_TTL) continue
       s.files = (s.files || []).map((f) => ({ ...f, bytes: new Uint8Array(Buffer.from(f.bytes, 'base64')) }))
+      s.lastSeen = s.lastSeen || s.created || Date.now()
       sessions.set(t, s)
     }
     if (sessions.size) console.log(`[deploy] 已恢复 ${sessions.size} 个 AI 会话（agent-sessions.json）`)
@@ -128,8 +140,8 @@ function loadSessions() {
 }
 loadSessions()
 setInterval(() => {
-  flushSessions().catch((e) => console.error('[sessions] 落盘失败:', String(e)))
-}, 5000).unref()
+  if (sessionsDirty) flushSessions().catch((e) => console.error('[sessions] 落盘失败:', String(e)))
+}, 30000).unref()
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     try {
@@ -138,6 +150,13 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
     process.exit(0)
   })
 }
+process.on('exit', () => {
+  if (sessionsDirty) {
+    try {
+      fs.writeFileSync(SESSIONS_FILE, serializeSessions())
+    } catch {}
+  }
+})
 
 function newSession({ teamName, members = [], contest = '', leader = '', homeCity = '南京' }) {
   const token = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
@@ -155,6 +174,7 @@ function newSession({ teamName, members = [], contest = '', leader = '', homeCit
     files: [], // 平铺索引：{ id, legIndex, ...legFile }
   }
   sessions.set(token, session)
+  markSessionsDirty()
   return session
 }
 setInterval(() => {
@@ -699,6 +719,7 @@ async function handleAgent(req, res, pathname) {
       return
     }
     const session = newSession(body)
+    markSessionsDirty()
     sendJSON(res, 200, {
       token: session.token,
       idleExpireHours: SESSION_TTL / 3600000,
@@ -764,6 +785,7 @@ async function handleAgent(req, res, pathname) {
     }
     leg.files.push(rec)
     session.files.push(rec)
+    markSessionsDirty()
     recognizeAsync(session, rec)
     sendJSON(res, 200, {
       fileId: rec.id,
@@ -791,6 +813,7 @@ async function handleAgent(req, res, pathname) {
     if (req.method === 'DELETE') {
       leg.files.splice(leg.files.indexOf(rec), 1)
       session.files.splice(session.files.indexOf(rec), 1)
+      markSessionsDirty()
       sendJSON(res, 200, { ok: true })
       return
     }
@@ -861,6 +884,7 @@ async function handleAgent(req, res, pathname) {
         if (body.note != null) leg.payCheck.note = String(body.note)
       }
       const stillUnsorted = rec.slot === 'unsorted'
+      markSessionsDirty()
       sendJSON(res, 200, {
         ok: true,
         file: { id: rec.id, slot: rec.slot, extraSlots: rec.extraSlots || [], amount: rec.amount, members: rec.members, scope: rec.scope, leg: { group: leg.group, type: leg.type } },
