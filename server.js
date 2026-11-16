@@ -87,6 +87,57 @@ const SESSION_TTL = 4 * 3600 * 1000 // 闲置过期：每次携带 token 的请�
 const MAX_SESSIONS = 50
 const sessions = new Map() // token → session
 
+// ---- 会话持久化（反馈 2：进程重启不再丢会话）----
+// 会话对象可 JSON 序列化（bytes 存 base64）；每 5 秒把脏会话写盘，启动时加载。
+const SESSIONS_FILE = path.join(__dirname, 'agent-sessions.json')
+let sessionsDirty = false
+function markSessionsDirty() {
+  sessionsDirty = true
+}
+function serializeSessions() {
+  const out = {}
+  for (const [t, s] of sessions) {
+    out[t] = {
+      created: s.created,
+      st: s.st,
+      pg: s.pg,
+      files: s.files.map((f) => ({ ...f, bytes: Buffer.from(f.bytes).toString('base64') })),
+    }
+  }
+  return JSON.stringify(out)
+}
+async function flushSessions() {
+  if (!sessions.size) return
+  await fs.promises.writeFile(SESSIONS_FILE, serializeSessions())
+}
+function loadSessions() {
+  try {
+    const raw = fs.readFileSync(SESSIONS_FILE, 'utf8')
+    const obj = JSON.parse(raw)
+    const now = Date.now()
+    for (const [t, s] of Object.entries(obj)) {
+      if (now - s.created > SESSION_TTL) continue
+      s.files = (s.files || []).map((f) => ({ ...f, bytes: new Uint8Array(Buffer.from(f.bytes, 'base64')) }))
+      sessions.set(t, s)
+    }
+    if (sessions.size) console.log(`[deploy] 已恢复 ${sessions.size} 个 AI 会话（agent-sessions.json）`)
+  } catch {
+    /* 首次启动无文件 */
+  }
+}
+loadSessions()
+setInterval(() => {
+  flushSessions().catch((e) => console.error('[sessions] 落盘失败:', String(e)))
+}, 5000).unref()
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    try {
+      fs.writeFileSync(SESSIONS_FILE, serializeSessions())
+    } catch {}
+    process.exit(0)
+  })
+}
+
 function newSession({ teamName, members = [], contest = '', leader = '', homeCity = '南京' }) {
   const token = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
   const session = {
@@ -109,6 +160,18 @@ setInterval(() => {
   const now = Date.now()
   for (const [t, s] of sessions) if (now - s.lastSeen > SESSION_TTL) sessions.delete(t)
 }, 10 * 60 * 1000).unref()
+
+/** 微信等下载链路会在文件头前置垃圾字节（反馈 5）：定位真实魔数（%PDF / PK）并剥掉前缀 */
+function stripJunkPrefix(bytes, filename) {
+  const head = bytes.slice(0, 256)
+  if (bytes[0] === 0x25 && bytes[1] === 0x50) return { bytes, stripped: false } // 已是 %PDF
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return { bytes, stripped: false } // 已是 PK (zip/OFD)
+  const pdfIdx = head.indexOf(Buffer.from('%PDF'))
+  if (pdfIdx > 0) return { bytes: bytes.slice(pdfIdx), stripped: true }
+  const pk = head.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+  if (pk > 0) return { bytes: bytes.slice(pk), stripped: true }
+  return { bytes, stripped: false }
+}
 
 function ensureLeg(session, groupId, type) {
   let leg = session.pg.legs.find((l) => l.group === groupId && l.type === type)
@@ -141,17 +204,30 @@ function recognizeAsync(session, rec) {
     const mime = /\.png$/i.test(rec.name) ? 'image/png' : 'image/jpeg'
     const prompt =
       '识别这张报销材料图片，只输出一个 JSON 对象：{"金额":数字,"同学":["姓名"],"抬头":"东南大学或空","经济舱":true或false,"开票方":"发票开具单位全名","收款方":"支付记录收款方全名","起始地":"出发城市","到达地":"到达城市"}。无法判断的字段用空值。'
-    const r = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: process.env.OLLAMA_VISION_MODEL || 'glm-ocr:latest',
-        stream: false,
-        options: { num_ctx: NUM_CTX },
-        messages: [{ role: 'user', images: [b64], content: prompt }],
-      }),
-    })
-    if (!r.ok) throw new Error(`Ollama ${r.status}`)
+    // 失败自动重试一次（反馈 3：偶发 fetch failed / Ollama 抖动）
+    let r = null
+    let lastErr = null
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const resp = await fetch(`${OLLAMA_URL}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: process.env.OLLAMA_VISION_MODEL || 'glm-ocr:latest',
+            stream: false,
+            options: { num_ctx: NUM_CTX },
+            messages: [{ role: 'user', images: [b64], content: prompt }],
+          }),
+        })
+        if (!resp.ok) throw new Error(`Ollama ${resp.status}`)
+        r = resp
+        break
+      } catch (e) {
+        lastErr = e
+        if (attempt < 2) await new Promise((res) => setTimeout(res, 3000))
+      }
+    }
+    if (!r) throw lastErr || new Error('Ollama 请求失败')
     const j = await r.json()
     const content = j?.message?.content || ''
     const slotName = Core.slotNameOf(leg, rec.slot)
@@ -181,7 +257,7 @@ function recognizeAsync(session, rec) {
     rec.recog = { status: 'done', via: 'ollama' }
   })().catch((e) => {
     rec.recog = { status: 'failed', via: 'ollama', error: String((e && e.message) || e) }
-    rec.meta = { status: '识别失败（可由 AI 自行读取图片内容后 PATCH 提交）' }
+    rec.meta = { status: '识别失败，可重新上传该文件，或手动填写金额 / 归属（也可由 AI 读取图片内容后 PATCH 提交）' }
   })
 }
 
@@ -415,7 +491,7 @@ async function handleAgent(req, res, pathname) {
   const token = parts[3] || ''
   const session = sessions.get(token)
   if (!session) {
-    sendJSON(res, 404, { error: { message: '会话不存在或已过期（重新 POST /api/agent/sessions 创建）' } })
+    sendJSON(res, 404, { error: { message: '会话不存在或已过期（若整理中途突然全部失效，通常是服务器重启过——请重新创建会话并重传材料；已填内容如已打包则不受影响）' } })
     return
   }
   session.lastSeen = Date.now() // 闲置过期：活跃会话自动续期
@@ -438,7 +514,9 @@ async function handleAgent(req, res, pathname) {
     } catch {
       filename = String(rawName)
     }
-    const bytes = new Uint8Array(await readBody(req, 64))
+    const raw = new Uint8Array(await readBody(req, 64))
+    const fixed = stripJunkPrefix(raw, filename)
+    const bytes = fixed.bytes
     // 判不出类别不拒绝：落入「未分类」段（不参与核对/打包），AI 读取内容后 PATCH group/type/slot 归位
     const cls = Core.classifyMaterial(filename)
     const unclassified = !cls || !cls.groupId
@@ -469,7 +547,9 @@ async function handleAgent(req, res, pathname) {
       ...(unclassified
         ? { warning: `文件名未含可识别关键词，已存入「未分类」段。请读取文件内容后 PATCH 本文件 {group, type, slot} 归位。分类关键词：${Core.CLASSIFY_HINTS}` }
         : {}),
-      hint: '图片将自动 OCR；文本型 PDF/OFD 请自行读取内容后 PATCH 提交 amount/members',
+      hint:
+        '图片将自动 OCR；文本型 PDF/OFD 请自行读取内容后 PATCH 提交 amount/members' +
+        (fixed.stripped ? '；已自动剥离文件头的下载垃圾前缀' : ''),
     })
     return
   }
@@ -524,7 +604,9 @@ async function handleAgent(req, res, pathname) {
         const extras = Array.isArray(body.slot) ? body.slot.slice(1) : body.extraSlots
         if (primary != null) {
           if (!legalIds().includes(primary)) {
-            sendJSON(res, 400, { error: { message: `slot「${primary}」不属于该行程段（${Core.TYPE_META[leg.type]?.label || leg.type}）。合法值：${legalList()}` } })
+            const unsortedHint =
+              leg.type === 'unsorted' ? '。归位（未分类 → 正式段）需同时传 type，如 {"type":"hotel","slot":"h_invoice"}（group 可省略自动反推）' : ''
+            sendJSON(res, 400, { error: { message: `slot「${primary}」不属于该行程段（${Core.TYPE_META[leg.type]?.label || leg.type}）。合法值：${legalList()}${unsortedHint}` } })
             return
           }
           rec.slot = primary

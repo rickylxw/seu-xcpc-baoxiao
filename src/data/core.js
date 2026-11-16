@@ -39,6 +39,7 @@ export const TYPE_META = {
     ph: '如：10.24 G1234 南京南—长春',
     slots: [
       { id: 't_voucher', name: '车票报销凭证', required: true, note: '打印报销凭证即可，无需支付/预订记录；仅限二等座；购票勿勾选保险等附加服务' },
+      { id: 't_pay', name: '购票支付记录', required: false, note: '按需（规则未要求）；12306 购票支付记录想收集可附在这里' },
     ],
   },
   local: {
