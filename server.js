@@ -84,8 +84,8 @@ function toOllamaChat(body) {
 }
 
 // ---- AI Agent 会话实现 ----
-const SESSION_TTL = 4 * 3600 * 1000 // 闲置过期：每次携带 token 的请求自动续期
-const MAX_SESSIONS = 50
+const SESSION_TTL = 30 * 24 * 3600 * 1000 // 闲置过期一个月：每次携带 token 的请求自动续期
+const MAX_SESSIONS = 200
 const sessions = new Map() // token → session
 
 // ---- 会话持久化（反馈 2：进程重启不再丢会话）----
@@ -117,7 +117,7 @@ function loadSessions() {
     const obj = JSON.parse(raw)
     const now = Date.now()
     for (const [t, s] of Object.entries(obj)) {
-      if (now - s.created > SESSION_TTL) continue
+      if (now - (s.lastSeen || s.created) > SESSION_TTL) continue
       s.files = (s.files || []).map((f) => ({ ...f, bytes: new Uint8Array(Buffer.from(f.bytes, 'base64')) }))
       sessions.set(t, s)
     }

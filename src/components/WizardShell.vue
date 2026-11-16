@@ -279,7 +279,7 @@ async function copyText(t, label) {
     </div>
     <div v-if="showAI" class="wiz-ai-panel">
       <p class="hint" style="margin: 0 0 6px">
-        适合会用 AI 的同学：需要你的 AI 能联网执行 HTTP，或已配置下方 MCP。材料仅在部署服务器内存暂存 4 小时。
+        适合会用 AI 的同学：需要你的 AI 能联网执行 HTTP，或已配置下方 MCP。材料仅在部署服务器内存暂存一个月（闲置自动过期）。
         需部署形态（node server.js）才提供 <code>/api/agent</code> 与 MCP 接口。
       </p>
       <div class="ai-line">
