@@ -116,7 +116,52 @@ const TOOLS = [
     description: '打包并下载队伍 ZIP 到本地路径。打包前先用 get_status 确认 next 建议已全部处理。',
     inputSchema: {
       type: 'object',
-      properties: { savePath: { type: 'string', description: '保存到的本地路径（如 ./队长队-报销材料.zip）' } },
+      properties: { savePath: { type: 'string', description: '保存到的本地路径（如 ./报销材料.zip）' } },
+      required: ['savePath'],
+    },
+  },
+  // ---- 负责人赛站汇总 ----
+  {
+    name: 'station_set_name',
+    description: '负责人：设置赛站名称（用于赛站总包文件夹命名）。',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: '赛站名称，如 CCPC 2026 长春站' } },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'station_upload_team_zip',
+    description: '负责人：上传一个队伍 ZIP 到赛站汇总（自动提取每队名单与核对报告待办）。',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string', description: '本地队伍 ZIP 文件路径' } },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'station_upload_entryfee',
+    description: '负责人：上传参赛费材料。slot 需为 invite（邀请函）/ fee_invoice（参赛费发票）/ fee_pay（参赛费支付记录）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '本地文件路径' },
+        slot: { type: 'string', enum: ['invite', 'fee_invoice', 'fee_pay'] },
+      },
+      required: ['path', 'slot'],
+    },
+  },
+  {
+    name: 'station_status',
+    description: '负责人：查看赛站汇总状态（各队 ZIP、参赛费材料、名单汇总、下一步建议）。',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'station_pack',
+    description: '打包赛站总包并下载到本地路径（含 00-参赛费、各队文件夹、问题清单、汇总说明）。',
+    inputSchema: {
+      type: 'object',
+      properties: { savePath: { type: 'string', description: '保存到的本地路径（如 ./赛站汇总.zip）' } },
       required: ['savePath'],
     },
   },
@@ -184,6 +229,41 @@ async function callTool(name, args = {}) {
     case 'submit_feedback': {
       const { json, status } = await api('POST', '/api/agent/feedback', args)
       return JSON.stringify({ status, ...json }, null, 2)
+    }
+    // ---- 负责人赛站汇总（无需 create_session）----
+    case 'station_set_name': {
+      const { json } = await api('PATCH', '/api/agent/station', { name: args.name })
+      return JSON.stringify(json, null, 2)
+    }
+    case 'station_upload_team_zip': {
+      const bytes = fs.readFileSync(path.resolve(args.path))
+      const { json, status } = await api('POST', '/api/agent/station/zips', bytes, {
+        'X-Filename': encodeURIComponent(path.basename(args.path)),
+        'Content-Type': 'application/zip',
+      })
+      return JSON.stringify({ status, ...json }, null, 2)
+    }
+    case 'station_upload_entryfee': {
+      if (!['invite', 'fee_invoice', 'fee_pay'].includes(args.slot)) {
+        return '错误：slot 需为 invite / fee_invoice / fee_pay'
+      }
+      const bytes = fs.readFileSync(path.resolve(args.path))
+      const { json, status } = await api('POST', '/api/agent/station/entryfees', bytes, {
+        'X-Filename': encodeURIComponent(path.basename(args.path)),
+        'X-Slot': args.slot,
+      })
+      return JSON.stringify({ status, ...json }, null, 2)
+    }
+    case 'station_status': {
+      const { json } = await api('GET', '/api/agent/station/status')
+      return JSON.stringify(json, null, 2)
+    }
+    case 'station_pack': {
+      const { status, bytes } = await api('POST', '/api/agent/station/zip')
+      if (status !== 200) return '打包失败：' + bytes.toString('utf8').slice(0, 300)
+      const save = path.resolve(args.savePath || './赛站汇总.zip')
+      fs.writeFileSync(save, bytes)
+      return `已保存：${save}（${bytes.length} 字节）`
     }
     default:
       return `未知工具：${name}`

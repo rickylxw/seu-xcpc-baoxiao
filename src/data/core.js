@@ -3,6 +3,7 @@
    所有函数都接受 (st, pg) 形式的普通对象（结构与 store 的 state / pkg 一致），
    不读取任何单例，服务器可为每个会话构造独立实例。 */
 import { makeZip } from '../utils/zip.js'
+import { readZipEntries, commonRoot } from '../utils/unzip.js'
 import { membersCSVString, sanitizeName } from '../utils/misc.js'
 
 export const SCHOOL = '东南大学'
@@ -610,4 +611,121 @@ export async function buildTeamZipCore(st, pg, extraFiles = []) {
   }
 
   return makeZip(files.map((f) => ({ name: f.path, data: f.data })))
+}
+
+/* ---------- 赛站汇总打包（负责人）---------- */
+
+/** 解析核对报告文本的「四、待办事项」区段（原 report.js 的实现，纯文本解析） */
+export function parseTodosSection(reportTextStr) {
+  const lines = String(reportTextStr || '').split('\n')
+  const start = lines.findIndex((l) => l.startsWith('【四、待办事项'))
+  if (start === -1) return []
+  const todos = []
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i].trim()
+    if (l.startsWith('【')) break
+    const m = l.match(/^\d+\.\s+(.*)$/)
+    if (m) todos.push(m[1])
+  }
+  return todos
+}
+
+/**
+ * 赛站汇总 ZIP（负责人）：各队 ZIP 解包按队合并 + 00-参赛费 + 问题清单 + 汇总说明。
+ * items: [{ file: Blob/File/Uint8Array 兼容对象, team: '队名（可空，取 ZIP 顶层目录）' }]
+ * entryFeeFiles: [{ file: Blob/File/Uint8Array 兼容对象, name, slot: 'invite'|'fee_invoice'|'fee_pay' }]
+ * opts.approvalDocxBytes: 可选——差旅审批单 docx 字节（浏览器端由表单生成；服务器端缺省时汇总说明会注明另行提交）
+ */
+export async function buildStationZipCore(stationName, items, entryFeeFiles = [], opts = {}) {
+  const enc = new TextEncoder()
+  const root = sanitizeName(`${stationName}-报销材料汇总`)
+  const files = []
+  const summary = [
+    '赛站报销材料汇总',
+    `赛站：${stationName}`,
+    `生成时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
+    `队伍数：${items.length}`,
+    '',
+  ]
+  const used = new Set()
+  const teamIssues = []
+  for (const it of items) {
+    const entries = await readZipEntries(it.file)
+    const strip = commonRoot(entries.map((e) => e.name))
+    const fallbackZip = it.file && it.file.name ? it.file.name.replace(/\.zip$/i, '') : ''
+    const rootName = strip ? strip.replace(/\/$/, '') : ''
+    let team = safeRel(sanitizeName(it.team || rootName || fallbackZip || '未命名队')) || '未命名队'
+    const base = team
+    let k = 2
+    while (used.has(team)) team = `${base}-${k++}`
+    used.add(team)
+
+    let cnt = 0
+    for (const e of entries) {
+      const rel = safeRel(strip && e.name.startsWith(strip) ? e.name.slice(strip.length) : e.name)
+      if (!rel) continue
+      files.push({ name: `${root}/${team}/${rel}`, data: e.data })
+      cnt++
+    }
+    // 解析该队核对报告中的待办事项，汇总到问题清单
+    const reportEntry = entries.find((e) => e.name.includes('核对报告.txt'))
+    let todos = []
+    if (reportEntry) {
+      todos = parseTodosSection(new TextDecoder('utf-8').decode(reportEntry.data))
+    }
+    teamIssues.push({ team, todos })
+    summary.push(`- ${team}：${cnt} 个文件${todos.length ? `，待办 ${todos.length} 项 ⚠` : ''}`)
+  }
+
+  // 问题清单：跨队伍汇总各队未完成待办（从各队核对报告解析）
+  const allIssues = teamIssues.filter((t) => t.todos.length)
+  if (allIssues.length) {
+    const L = ['各队伍待办事项清单（提交前请逐项核实）', '']
+    for (const t of allIssues) {
+      L.push(`【${t.team}】共 ${t.todos.length} 项`)
+      t.todos.forEach((td, i) => L.push(`  ${i + 1}. ${td}`))
+      L.push('')
+    }
+    files.push({
+      name: `${root}/问题清单.txt`,
+      data: enc.encode('\ufeff' + L.join('\n')),
+    })
+  }
+
+  // 参赛费材料（赛站级，负责人统一收取），放进 00-参赛费/
+  if (entryFeeFiles.length) {
+    const efSlots = TYPE_META.entryfee.slots
+    const ordered = []
+    for (const s of efSlots) ordered.push(...entryFeeFiles.filter((fl) => fl.slot === s.id))
+    ordered.push(...entryFeeFiles.filter((fl) => !efSlots.some((s) => s.id === fl.slot)))
+    let n = 0
+    for (const fl of ordered) {
+      const slotName = efSlots.find((s) => s.id === fl.slot)?.name || '其他材料'
+      const bytes = fl.bytes || (fl.file && fl.file.arrayBuffer ? new Uint8Array(await fl.file.arrayBuffer()) : null)
+      if (!bytes) continue
+      const ext = (fl.file?.name || fl.name || '').match(/\.[^.]+$/)?.[0] || ''
+      files.push({
+        name: `${root}/00-参赛费/${String(++n).padStart(2, '0')}-${slotName}${ext}`,
+        data: bytes,
+      })
+    }
+    summary.push(`- 参赛费材料：${n} 个文件（负责人统一收取）`)
+  }
+
+  // 差旅审批单：调用方提供字节则打包（服务器版由负责人另行用网页生成或线下提交）
+  if (opts.approvalDocxBytes) {
+    files.push({
+      name: `${root}/差旅审批单.docx`,
+      data: opts.approvalDocxBytes,
+    })
+    summary.push('- 差旅审批单：1 份')
+  } else {
+    summary.push('- 差旅审批单：另行提交（可用网页端「差旅审批单」页生成后加入）')
+  }
+  summary.push(
+    '',
+    '说明：各队伍材料由《XCPC 报销材料整理工具》按队打包后汇总，材料明细见各队伍文件夹内的队伍信息.txt 与核对报告.txt。',
+  )
+  files.push({ name: `${root}/汇总说明.txt`, data: enc.encode('\ufeff' + summary.join('\n')) })
+  return makeZip(files)
 }

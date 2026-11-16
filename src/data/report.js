@@ -96,20 +96,8 @@ export function msgTemplates() {
   ]
 }
 
-/** 从核对报告文本中解析【四、待办事项】清单（用于赛站汇总时读取各队 ZIP 内的报告） */
-export function parseTodosSection(reportTextStr) {
-  const lines = String(reportTextStr || '').split('\n')
-  const start = lines.findIndex((l) => l.startsWith('【四、待办事项'))
-  if (start === -1) return []
-  const todos = []
-  for (let i = start + 1; i < lines.length; i++) {
-    const l = lines[i].trim()
-    if (l.startsWith('【')) break
-    const m = l.match(/^\d+\.\s+(.*)$/)
-    if (m) todos.push(m[1])
-  }
-  return todos
-}
+// parseTodosSection 已抽到 core.js（服务器零依赖复用），此处转发保持外部导入方不变
+export { parseTodosSection } from './core'
 
 const TIPS = [
   '发票抬头必须为「东南大学」，税务识别号：12100000466006770Q。',

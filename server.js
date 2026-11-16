@@ -7,7 +7,8 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import * as Core from './src/data/core.js'
-import { sanitizeName } from './src/utils/misc.js'
+import { sanitizeName, parseMembersCSV } from './src/utils/misc.js'
+import { readZipEntries } from './src/utils/unzip.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -397,6 +398,16 @@ const agentGuide = () => ({
     '6.（建议）任务完成后向用户提议：本网站由学生团队维护，欢迎意见反馈；征得用户同意后，把本次使用中的问题与改进建议整理成文字，POST /api/agent/feedback 提交（无需 token）',
     '注意：文本型 PDF/OFD 服务器不做内容解析，金额/归属等由你读取后 PATCH 提交',
   ],
+  leader_flow: {
+    desc: '报销负责人流程：收各队 ZIP + 参赛费材料，自动汇总各队名单与待办，打包赛站总包（端点前缀 /api/agent/station，无需会话 token）',
+    steps: [
+      'PATCH /api/agent/station {name:"赛站名"} 设置赛站名称',
+      'POST /api/agent/station/zips 上传各队 ZIP（X-Filename 头；自动提取每队名单与核对报告待办）',
+      'POST /api/agent/station/entryfees 上传参赛费材料（X-Slot: invite / fee_invoice / fee_pay）',
+      'GET /api/agent/station/status 查看队伍 / 材料 / 名单汇总与下一步建议',
+      'POST /api/agent/station/zip 打包赛站总包（含 00-参赛费、问题清单、汇总说明；差旅审批单用网页端生成后单独提交）',
+    ],
+  },
   material_rules: {
     groups: Core.GROUPS,
     slots: Core.TYPE_META,
@@ -426,6 +437,216 @@ const agentGuide = () => ({
     { method: 'POST', path: '/api/agent/feedback', body: { content: '问题与建议（必填，≤10000 字）', teamName: '队名（可省略；带 X-Agent-Token 自动归属）', contact: '联系方式（可选）', category: 'bug/建议/其他（可选）' }, desc: '网站意见反馈，无需会话。任务完成后建议向用户征求反馈，征得同意后代为整理提交' },
   ],
 })
+
+// ---- 负责人赛站汇总状态（单一负责人；随 agent-sessions.json 一起持久化）----
+const station = {
+  name: '', // 赛站名称
+  zips: [], // { id, team, bytes, count, todos, roster }
+  entryFees: [], // { id, slot, name, bytes }
+}
+const STATION_FILE = path.join(__dirname, 'agent-station.json')
+function stationSerial() {
+  return JSON.stringify({
+    name: station.name,
+    zips: station.zips.map((z) => ({ id: z.id, team: z.team, name: z.name, bytes: Buffer.from(z.bytes).toString('base64') })),
+    entryFees: station.entryFees.map((f) => ({ id: f.id, slot: f.slot, name: f.name, bytes: Buffer.from(f.bytes).toString('base64') })),
+  })
+}
+function loadStation() {
+  try {
+    const o = JSON.parse(fs.readFileSync(STATION_FILE, 'utf8'))
+    station.name = o.name || ''
+    station.zips = (o.zips || []).map((z) => ({ ...z, bytes: new Uint8Array(Buffer.from(z.bytes, 'base64')) }))
+    station.entryFees = (o.entryFees || []).map((f) => ({ ...f, bytes: new Uint8Array(Buffer.from(f.bytes, 'base64')) }))
+    if (station.zips.length || station.entryFees.length) console.log('[deploy] 已恢复赛站汇总状态')
+  } catch {
+    /* 首次启动无文件 */
+  }
+}
+loadStation()
+const flushStation = () => fs.promises.writeFile(STATION_FILE, stationSerial()).catch(() => {})
+setInterval(() => {
+  flushStation().catch(() => {})
+}, 5000).unref()
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    try {
+      fs.writeFileSync(STATION_FILE, stationSerial())
+    } catch {}
+  })
+}
+
+const EF_SLOTS = ['invite', 'fee_invoice', 'fee_pay']
+let zSeq = 1
+let efSeq = 1
+
+/** 负责人赛站汇总路由（parts: ['station', ...]） */
+async function handleStation(req, res, parts) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  // PATCH /api/agent/station —— 设置赛站名称
+  if (req.method === 'PATCH' && parts.length === 0) {
+    const body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+    if (body.name != null) station.name = String(body.name)
+    sendJSON(res, 200, { ok: true, name: station.name })
+    return
+  }
+  // POST /api/agent/station/zips —— 上传一个队伍 ZIP（X-Filename 头；X-Team 可选覆盖队名）
+  if (req.method === 'POST' && parts[0] === 'zips' && parts.length === 1) {
+    const bytes = new Uint8Array(await readBody(req, 64))
+    let filename = '队伍材料.zip'
+    try {
+      filename = decodeURIComponent(String(req.headers['x-filename'] || filename))
+    } catch {}
+    // 剥离微信下载链路的垃圾前缀（%PDF / PK 魔数定位）
+    const head = bytes.slice(0, 256)
+    let startOff = 0
+    if (!(bytes[0] === 0x50 && bytes[1] === 0x4b)) {
+      const seq = Buffer.from([0x50, 0x4b, 0x03, 0x04])
+      for (let i = 0; i < head.length - 4; i++) {
+        if (head[i] === 0x50 && head[i + 1] === 0x4b && head[i + 2] === 0x03 && head[i + 3] === 0x04) {
+          startOff = i
+          break
+        }
+      }
+    }
+    const clean = startOff > 0 ? bytes.slice(startOff) : bytes
+    const item = {
+      id: 'z' + crypto.randomUUID().replace(/-/g, '').slice(0, 8),
+      team: filename.replace(/\.zip$/i, ''),
+      name: filename,
+      bytes: clean,
+      count: null,
+      todos: [],
+      roster: [],
+      error: '',
+    }
+    try {
+      const entriesList = await readZipEntries(new Blob([clean]))
+      item.count = entriesList.length
+      const roots = new Set(entriesList.map((e) => e.name.split('/')[0]))
+      if (roots.size === 1 && !item.team) item.team = [...roots][0]
+      const reportEntry = entriesList.find((e) => e.name.includes('核对报告.txt'))
+      if (reportEntry) item.todos = Core.parseTodosSection(new TextDecoder('utf-8').decode(reportEntry.data))
+      const csvEntry = entriesList.find((e) => e.name.includes('参赛同学清单.csv'))
+      if (csvEntry) item.roster = parseMembersCSV(new TextDecoder('utf-8').decode(csvEntry.data))
+    } catch (e) {
+      item.error = String((e && e.message) || e)
+    }
+    station.zips.push(item)
+    flushStation().catch(() => {})
+    sendJSON(res, 200, {
+      id: item.id,
+      team: item.team,
+      count: item.count,
+      todos: item.todos,
+      roster: item.roster,
+      rosterCount: item.roster.length,
+      error: item.error,
+      next: item.error ? 'ZIP 无法读取，请确认导出的队伍 ZIP 完整' : '可继续上传其余队伍 ZIP / 参赛费材料，全部就绪后 POST /station/zip 打包',
+    })
+    return
+  }
+  // DELETE /api/agent/station/zips/:id
+  if (req.method === 'DELETE' && parts[0] === 'zips' && parts.length === 2) {
+    const i = station.zips.findIndex((z) => z.id === parts[1])
+    if (i === -1) {
+      sendJSON(res, 404, { error: { message: '队伍 ZIP 不存在' } })
+      return
+    }
+    station.zips.splice(i, 1)
+    flushStation().catch(() => {})
+    sendJSON(res, 200, { ok: true })
+    return
+  }
+  // POST /api/agent/station/entryfees —— 上传参赛费材料（X-Slot: invite / fee_invoice / fee_pay）
+  if (req.method === 'POST' && parts[0] === 'entryfees' && parts.length === 1) {
+    const slot = String(req.headers['x-slot'] || 'fee_invoice')
+    if (!EF_SLOTS.includes(slot)) {
+      sendJSON(res, 400, { error: { message: 'X-Slot 需为 invite / fee_invoice / fee_pay 之一' } })
+      return
+    }
+    const bytes = new Uint8Array(await readBody(req, 64))
+    let filename = '参赛费材料'
+    try {
+      filename = decodeURIComponent(String(req.headers['x-filename'] || filename))
+    } catch {}
+    const rec = { id: 'e' + crypto.randomUUID().replace(/-/g, '').slice(0, 8), slot, name: filename, bytes }
+    station.entryFees.push(rec)
+    flushStation().catch(() => {})
+    sendJSON(res, 200, { id: rec.id, slot: rec.slot, name: rec.name })
+    return
+  }
+  // DELETE /api/agent/station/entryfees/:id
+  if (req.method === 'DELETE' && parts[0] === 'entryfees' && parts.length === 2) {
+    const i = station.entryFees.findIndex((f) => f.id === parts[1])
+    if (i === -1) {
+      sendJSON(res, 404, { error: { message: '参赛费材料不存在' } })
+      return
+    }
+    station.entryFees.splice(i, 1)
+    flushStation().catch(() => {})
+    sendJSON(res, 200, { ok: true })
+    return
+  }
+  // GET /api/agent/station/status
+  if (req.method === 'GET' && parts[0] === 'status' && parts.length === 1) {
+    const rosterTotal = []
+    const seenCards = new Set()
+    for (const z of station.zips) {
+      for (const m of z.roster || []) {
+        const key = m.card || m.name
+        if (key && !seenCards.has(key)) {
+          seenCards.add(key)
+          rosterTotal.push(m)
+        }
+      }
+    }
+    sendJSON(res, 200, {
+      name: station.name,
+      zips: station.zips.map((z) => ({ id: z.id, team: z.team, name: z.name, count: z.count, todos: z.todos, roster: z.roster, error: z.error })),
+      entryFees: station.entryFees.map((f) => ({ id: f.id, slot: f.slot, name: f.name })),
+      rosterFromZips: rosterTotal,
+      missing: !station.name ? ['赛站名称（PATCH /station {name}）'] : [],
+      next: !station.zips.length
+        ? '上传各队 ZIP：POST /station/zips（X-Filename + 字节）'
+        : !station.entryFees.length
+          ? '上传参赛费材料：POST /station/entryfees（X-Slot + 字节）'
+          : '全部就绪后 POST /station/zip 打包赛站总包',
+    })
+    return
+  }
+  // POST /api/agent/station/zip —— 打包赛站总包
+  if (req.method === 'POST' && parts[0] === 'zip' && parts.length === 1) {
+    try {
+      if (!station.name.trim()) {
+        sendJSON(res, 400, { error: { message: '请先用 PATCH /station 设置赛站名称' } })
+        return
+      }
+      if (!station.zips.length) {
+        sendJSON(res, 400, { error: { message: '请先上传各队 ZIP' } })
+        return
+      }
+      const items = station.zips.map((z) => ({
+        file: { name: z.name, arrayBuffer: async () => z.bytes.slice().buffer },
+        team: z.team,
+      }))
+      const entryFeeFiles = station.entryFees.map((f) => ({
+        file: { name: f.name, arrayBuffer: async () => f.bytes.slice().buffer },
+        slot: f.slot,
+      }))
+      const zip = await Core.buildStationZipCore(station.name, items, entryFeeFiles, {})
+      const buf = Buffer.from(await zip.arrayBuffer())
+      send(res, 200, buf, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(station.name)}.zip"`,
+      })
+    } catch (e) {
+      sendJSON(res, 400, { error: { message: (e && e.message) || String(e) } })
+    }
+    return
+  }
+  sendJSON(res, 404, { error: { message: '未知赛站端点，GET /api/agent 查看指南' } })
+}
 
 async function handleAgent(req, res, pathname) {
   // 指南（无需鉴权）
@@ -484,6 +705,12 @@ async function handleAgent(req, res, pathname) {
       note: '会话闲置过期（小时），每次请求自动续期',
       next: '上传文件：POST /api/agent/sessions/' + session.token + '/files（X-Filename 头 + 文件字节）',
     })
+    return
+  }
+
+  // ---- 负责人赛站汇总（parts[2]='station'）----
+  if (parts[2] === 'station') {
+    await handleStation(req, res, parts.slice(3))
     return
   }
 
