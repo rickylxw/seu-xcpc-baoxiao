@@ -771,7 +771,7 @@ export function memberAmountsCore(st, pg) {
 export function sysFillText(st, pg) {
   const L = []
   const amt = (v) => (v ? `¥${v}` : '')
-  L.push('【一、报销基本信息（财务系统「报销单管理 → 请填写报销基本信息」）】')
+  L.push('【一、报销基本信息（财务系统网上报销：https://caiwuchujf.seu.edu.cn/WFManager/home2.jsp）】')
   L.push(`选择业务大类：日常报销业务`)
   L.push(`报销项目号：${st.meta?.projectNo || '（未填写）'}`)
   L.push(`项目负责人：${st.meta?.projectLeader || '（未填写）'}`)
@@ -814,6 +814,7 @@ export function sysFillText(st, pg) {
   L.push('教工伙食补贴 / 教工交通补贴：仅教工出差填写（学生参赛一般为 0）')
   L.push('学生伙食补贴 / 学生交通补贴：按财务标准与出差天数填写')
   L.push('')
+  L.push('财务系统入口：https://caiwuchujf.seu.edu.cn/WFManager/home2.jsp（报销单管理 → 日常报销业务）')
   L.push('【四、注意事项】')
   L.push('1. 附件张数 = 本 ZIP 内材料文件数；支付方式 / 币种（人民币）按财务系统下拉选择')
   L.push('2. 「选择已认证发票」：上传数电票后财务系统自动带出，无需手工录入')

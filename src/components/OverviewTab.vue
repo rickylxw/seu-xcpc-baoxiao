@@ -171,8 +171,12 @@ async function copyTax() {
     </div>
 
     <div class="card">
-      <h2>财务系统填写信息<span class="qs-who">（队长 / 报销负责人填写，用于「报销单管理」系统录入与对照单）</span></h2>
-      <p class="hint">报销时需在学校财务系统（报销单管理）录入以下信息；打包 ZIP 与核对报告会自动生成「报销系统填写对照单」方便照着录入。</p>
+      <h2>财务系统填写信息<span class="qs-who">（报销负责人填写，用于「报销单管理」系统录入与对照单）</span></h2>
+      <p class="hint">
+        报销由<b>报销负责人</b>在学校财务系统（网上报销：
+        <a href="https://caiwuchujf.seu.edu.cn/WFManager/home2.jsp" target="_blank" rel="noreferrer">caiwuchujf.seu.edu.cn</a>）录入；
+        打包 ZIP 与核对报告会自动生成「报销系统填写对照单」，照着录入即可。
+      </p>
       <div class="form-grid">
         <label class="field">
           <span>报销项目号</span>
