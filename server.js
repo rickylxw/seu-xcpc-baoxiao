@@ -283,28 +283,32 @@ function recognizeAsync(session, rec) {
 }
 
 /**
- * 服务器版「发票汇总-扫描打印版.pdf」：发票/凭证类材料按清单顺序合成一个 PDF。
- * 图片（jpg/png）按 A4 排版；PDF 原件无损拷页；OFD 等无法解析的跳过并记录。
- * pdf-lib 可用时才生成（返回 null 表示环境缺依赖或没有发票材料）。
+ * 服务器版汇总 PDF：按清单顺序把材料合成一个 PDF。
+ * @param invoicesOnly true = 仅发票/凭证类（「发票汇总-扫描打印版」）；false = 全部材料（「材料汇总-全部材料」）
+ * 图片（jpg/png）按 A4 排版；PDF 原件无损拷页；OFD 等无法解析的跳过并记录（OFD 原件仍在包内）。
+ * pdf-lib 可用时才生成（返回 null 表示环境缺依赖或没有可合成的材料）。
  */
-async function buildInvoicesPdfServer(session) {
+async function buildSummaryPdfServer(session, { invoicesOnly = false } = {}) {
   let PDFDocument
   try {
     PDFDocument = (await import('pdf-lib')).PDFDocument
   } catch (e) {
-    console.error('[invoices] pdf-lib 导入失败:', String((e && e.message) || e))
+    console.error('[summary] pdf-lib 导入失败:', String((e && e.message) || e))
     return null
   }
   const A4 = { w: 595.28, h: 841.89 }
   const INV_SLOTS = new Set(['f_invoice', 'h_invoice', 'l_invoice', 'fee_invoice', 't_voucher'])
+  const title = invoicesOnly
+    ? `${session.st.meta?.contest || 'XCPC'} 报销发票汇总（${session.st.teamName}）`
+    : `${session.st.meta?.contest || 'XCPC'} 全部材料汇总（${session.st.teamName}）`
   const out = await PDFDocument.create()
-  out.setTitle(`${session.st.meta?.contest || 'XCPC'} 报销发票汇总（${session.st.teamName}）`)
+  out.setTitle(title)
   let count = 0
   const skipped = []
   for (const g of Core.GROUPS) {
     for (const leg of session.pg.legs.filter((l) => l.group === g.id && l.files.length)) {
       for (const f of leg.files) {
-        if (!INV_SLOTS.has(f.slot)) continue
+        if (invoicesOnly && !INV_SLOTS.has(f.slot)) continue
         const name = f.file?.name || f.name
         try {
           if (/\.pdf$/i.test(name)) {
@@ -333,7 +337,7 @@ async function buildInvoicesPdfServer(session) {
       }
     }
   }
-  console.error(`[invoices] 完成 ${count} 个，跳过: ${JSON.stringify(skipped)}`)
+  console.error(`[summary] ${invoicesOnly ? '发票汇总' : '全部材料'} 完成 ${count} 个，跳过: ${JSON.stringify(skipped)}`)
   if (!count) return null
   return { bytes: await out.save(), count, skipped }
 }
@@ -444,6 +448,7 @@ const agentGuide = () => ({
     recog_状态机: 'files[].recog：pending=识别中；done=完成；failed=失败（原因见 recogError，可重新上传重试，或由你读取图片后 PATCH）；skipped=文本型 PDF/OFD，服务器不解析，由你读取后 PATCH 提交',
     zip_命名: 'ZIP 内段文件夹 = 「组序号-组名/段序号-类型-label」，label 来自 PATCH 的 label 字段（缺省只有类型名）。段文件夹按段组织，去/返程由文件名中的「去程/返程」标注区分——不要把多段行程混进一个段。文件名 = 「序号-槽位名-去返程-归属-金额.扩展名」',
     发票汇总: '打包 ZIP 自动附带「发票汇总-扫描打印版.pdf」：发票/凭证类图片与 PDF 按清单顺序合成（OFD 不参与，原件仍在包内）',
+    材料汇总: '打包 ZIP 同时自动附带「材料汇总-全部材料扫描打印版.pdf」：全部材料（PDF 无损拷页、图片排 A4）按清单顺序合成，OFD 原样保留在包内',
   },
   endpoints: [
     { method: 'GET', path: '/api/agent', desc: '本指南' },
@@ -906,12 +911,15 @@ async function handleAgent(req, res, pathname) {
         return
       }
       const extra = []
-      const invoices = await buildInvoicesPdfServer(session)
+      const root = sanitizeName(`${session.st.meta?.contest || 'XCPC'}-${session.st.teamName}-报销材料`)
+      const invoices = await buildSummaryPdfServer(session, { invoicesOnly: true })
       if (invoices) {
-        extra.push({
-          path: `${sanitizeName(`${session.st.meta?.contest || 'XCPC'}-${session.st.teamName}-报销材料`)}/发票汇总-扫描打印版.pdf`,
-          data: invoices.bytes,
-        })
+        extra.push({ path: `${root}/发票汇总-扫描打印版.pdf`, data: invoices.bytes })
+      }
+      // 全部材料汇总 PDF（PDF 无损拷页 + 图片排 A4；OFD 原件仍在包内）
+      const merged = await buildSummaryPdfServer(session, {})
+      if (merged) {
+        extra.push({ path: `${root}/材料汇总-全部材料扫描打印版.pdf`, data: merged.bytes })
       }
       const zip = await Core.buildTeamZipCore(session.st, session.pg, extra)
       const buf = Buffer.from(await zip.arrayBuffer())
