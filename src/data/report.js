@@ -2,6 +2,7 @@
 import { state, pkg, FLOW } from '../store'
 import { GROUPS, TYPE_META, missingRequired, slotsOf, memberCoverage, coverageGaps, scopeLabelOf, memberNamesOfIdx, invoiceHeaderIssues, cabinIssues, amountCheck } from './packaging'
 import { fmtDateCN } from '../utils/misc'
+import { sysFillText } from './core'
 
 export function deadlineText() {
   if (!state.meta.dateReturn) return '填写「返宁日期」后自动计算'
@@ -161,6 +162,9 @@ export function reportText() {
   } else {
     L.push('【四、待办事项】全部完成 ✓')
   }
+  L.push('')
+  L.push('【五、报销系统填写对照单（财务系统「报销单管理」录入用）】')
+  L.push(sysFillText(state, pkg))
   L.push('')
   L.push('【提示】')
   L.push(...TIPS)

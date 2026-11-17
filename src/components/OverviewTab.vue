@@ -171,6 +171,37 @@ async function copyTax() {
     </div>
 
     <div class="card">
+      <h2>财务系统填写信息<span class="qs-who">（队长 / 报销负责人填写，用于「报销单管理」系统录入与对照单）</span></h2>
+      <p class="hint">报销时需在学校财务系统（报销单管理）录入以下信息；打包 ZIP 与核对报告会自动生成「报销系统填写对照单」方便照着录入。</p>
+      <div class="form-grid">
+        <label class="field">
+          <span>报销项目号</span>
+          <input v-model="state.meta.projectNo" placeholder="财务系统里的项目编号" />
+        </label>
+        <label class="field">
+          <span>项目负责人（财务系统）</span>
+          <input v-model="state.meta.projectLeader" placeholder="如：指导老师姓名" />
+        </label>
+        <label class="field">
+          <span>申请人工号（报销负责人一卡通号）</span>
+          <input v-model="state.meta.leaderCard" placeholder="如：213253844" />
+        </label>
+        <label class="field">
+          <span>联系电话</span>
+          <input v-model="state.meta.phone" placeholder="报销联系手机号" />
+        </label>
+        <label class="field">
+          <span>电子邮件（可选）</span>
+          <input v-model="state.meta.email" placeholder="接收财务通知的邮箱" />
+        </label>
+        <label class="field">
+          <span>支付方式</span>
+          <input v-model="state.meta.payMethod" placeholder="如：银行转账 / 公务卡" />
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>报销办理流程<span class="qs-who">（队长 / 报销负责人跟进）</span></h2>
       <p class="hint">四步依次勾选，未完成的步骤会出现在「核对报告」的待办事项里。</p>
       <div v-for="(f, i) in FLOW" :key="i" class="flow-item" :class="{ done: state.flow[i] }">

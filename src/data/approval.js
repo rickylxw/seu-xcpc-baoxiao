@@ -28,10 +28,10 @@ export function todayCN() {
 
 function fmtDotted(iso) {
   const [y, m, d] = iso.split('-')
-  return `${y}．${Number(m)}.${Number(d)}`
+  return `${y}.${Number(m)}.${Number(d)}`
 }
 
-/** 出差起讫日期，如「2026．10.24-10.26」（跨年则两端带年份） */
+/** 出差起讫日期，如「2026.10.24-10.26」（跨年则两端带年份） */
 export function tripRange() {
   const { dateContest, dateReturn } = state.meta
   if (!dateContest && !dateReturn) return ''

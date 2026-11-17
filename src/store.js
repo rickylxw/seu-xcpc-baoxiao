@@ -26,7 +26,15 @@ export const FLOW = [
 export function defaultState() {
   return {
     version: 2,
-    meta: { contest: '', dateContest: '', dateReturn: '', leader: '', homeCity: '南京' },
+    meta: {
+      contest: '', dateContest: '', dateReturn: '', leader: '', homeCity: '南京',
+      projectNo: '', // 财务系统「报销项目号」
+      projectLeader: '', // 财务系统「项目负责人」
+      leaderCard: '', // 负责人一卡通号（财务系统「申请人工号」）
+      phone: '', // 财务系统「联系电话」
+      email: '', // 财务系统「电子邮件」
+      payMethod: '', // 财务系统「支付方式」
+    },
     teamName: '',
     members: [], // { name, card }
     flow: [false, false, false, false],

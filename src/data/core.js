@@ -575,6 +575,7 @@ export async function buildTeamZipCore(st, pg, extraFiles = []) {
     files.push({ path: safeRel(extra.path), data: extra.data })
   }
   files.push({ path: `${root}/核对报告.txt`, data: enc.encode('\ufeff' + teamReportText(st, pg)) })
+  files.push({ path: `${root}/报销系统填写对照单.txt`, data: enc.encode('\ufeff' + sysFillText(st, pg)) })
 
   const mismatches = amountCheckCore(st, pg).filter((a) => a.match === false)
   if (mismatches.length) {
@@ -728,4 +729,94 @@ export async function buildStationZipCore(stationName, items, entryFeeFiles = []
   )
   files.push({ name: `${root}/汇总说明.txt`, data: enc.encode('\ufeff' + summary.join('\n')) })
   return makeZip(files)
+}
+
+/* ---------- 财务系统「报销单管理」填写对照（生成对照单文档）---------- */
+
+/** 按队员汇总费用：车船费（机票发票+车票凭证）/ 市内交通（交通发票）/ 住宿费（住宿发票）。
+ *  members 为 null（全员共享）的金额单独计入 unassigned，不摊到个人。 */
+export function memberAmountsCore(st, pg) {
+  const per = st.members.map((m) => ({ idx: st.members.indexOf(m), name: m.name || `成员${st.members.indexOf(m) + 1}`, carShip: 0, local: 0, hotel: 0 }))
+  const un = { carShip: 0, local: 0, hotel: 0 }
+  const bucketOf = (slot) => {
+    if (slot === 'f_invoice' || slot === 't_voucher') return 'carShip'
+    if (slot === 'l_invoice') return 'local'
+    if (slot === 'h_invoice') return 'hotel'
+    return null
+  }
+  for (const leg of pg.legs) {
+    for (const f of leg.files) {
+      const bucket = bucketOf(f.slot)
+      if (!bucket) continue
+      const amt = parseAmount(f.amount)
+      if (amt == null) continue
+      if (f.members == null || !(f.members || []).length) {
+        un[bucket] += amt
+      } else {
+        for (const i of f.members) {
+          const row = per.find((p) => p.idx === i)
+          if (row) row[bucket] += amt
+        }
+      }
+    }
+  }
+  const round = (v) => Math.round(v * 100) / 100
+  return {
+    per: per.map((p) => ({ name: p.name, carShip: round(p.carShip), local: round(p.local), hotel: round(p.hotel) })),
+    unassigned: { carShip: round(un.carShip), local: round(un.local), hotel: round(un.hotel) },
+  }
+}
+
+/** 「报销系统填写对照单」文本：基本信息屏 + 差旅费明细屏（财务系统字段 → 工具值） */
+export function sysFillText(st, pg) {
+  const L = []
+  const amt = (v) => (v ? `¥${v}` : '')
+  L.push('【一、报销基本信息（财务系统「报销单管理 → 请填写报销基本信息」）】')
+  L.push(`选择业务大类：日常报销业务`)
+  L.push(`报销项目号：${st.meta?.projectNo || '（未填写）'}`)
+  L.push(`项目负责人：${st.meta?.projectLeader || '（未填写）'}`)
+  L.push(`申请人工号：${st.meta?.leaderCard || '（未填写）'}`)
+  L.push(`申请人姓名：${st.meta?.leader || '（未填写）'}`)
+  L.push(`实际报销人：${st.meta?.leader || '（未填写）'}`)
+  L.push(`电话：${st.meta?.phone || '（未填写）'}`)
+  L.push(`手机：${st.meta?.phone || '（未填写）'}`)
+  L.push(`电子邮件：${st.meta?.email || '（未填写）'}`)
+  const attach = pg.legs.reduce((n, leg) => n + leg.files.length, 0)
+  L.push(`附件张数：${attach}`)
+  L.push(`摘要：${st.meta?.contest ? `参加${st.meta.contest}差旅费报销` : '（未填写：建议「参加XX比赛差旅费报销」）'}`)
+  L.push(`支付方式：${st.meta?.payMethod || '（未填写）'}`)
+  L.push(`币种：人民币`)
+  L.push('')
+  L.push('【二、差旅费明细（财务系统「差旅费」页，每名出差人一行）】')
+  L.push(`出差地点：${st.approval?.place || st.meta?.homeCity || '（未填写）'}`)
+  const days = st.meta?.dateContest && st.meta?.dateReturn
+    ? Math.round((new Date(st.meta.dateReturn) - new Date(st.meta.dateContest)) / 86400000) + 1
+    : null
+  L.push(`出差期间：${st.meta?.dateContest || '____'} 至 ${st.meta?.dateReturn || '____'}${days ? `（${days} 天）` : ''}`)
+  L.push('')
+  const ma = memberAmountsCore(st, pg)
+  const anyAmt = ma.per.some((p) => p.carShip || p.local || p.hotel) || ma.unassigned.carShip || ma.unassigned.local || ma.unassigned.hotel
+  if (anyAmt) {
+    L.push('姓名｜职称｜出差地点｜车船费｜市内交通｜住宿费')
+    for (const p of ma.per) {
+      L.push(`${p.name}｜学生｜${st.approval?.place || ''}｜车船费 ¥${p.carShip.toFixed(2)}｜市内交通 ¥${p.local.toFixed(2)}｜住宿费 ¥${p.hotel.toFixed(2)}`)
+    }
+    const un = ma.unassigned
+    if (un.carShip || un.local || un.hotel) {
+      L.push(`（未按人拆分的全员共享费用：车船费 ¥${un.carShip.toFixed(2)}、市内交通 ¥${un.local.toFixed(2)}、住宿费 ¥${un.hotel.toFixed(2)}——如需按人拆分请在材料归属中指定队员）`)
+    }
+  } else {
+    L.push('（暂无按人归属的费用数据；导入发票并填写金额 / 归属后自动生成）')
+  }
+  L.push('')
+  L.push('【三、其他费用与补贴（财务系统对应输入框）】')
+  L.push('培训费 / 机场费 / 保险费 / 行李费 / 会务费 / 其他费用：见材料（本工具未单独跟踪，按发票手工填写）')
+  L.push('教工伙食补贴 / 教工交通补贴：仅教工出差填写（学生参赛一般为 0）')
+  L.push('学生伙食补贴 / 学生交通补贴：按财务标准与出差天数填写')
+  L.push('')
+  L.push('【四、注意事项】')
+  L.push('1. 附件张数 = 本 ZIP 内材料文件数；支付方式 / 币种（人民币）按财务系统下拉选择')
+  L.push('2. 「选择已认证发票」：上传数电票后财务系统自动带出，无需手工录入')
+  L.push('3. 报销等级：飞机仅限经济舱，高铁仅限二等座；住宿超标准部分不能报销')
+  return L.join('\n')
 }
