@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { state, previewFile } from '../store'
 import { TYPE_META, allSlotsOf, slotsOf } from '../data/packaging'
-import { isImageName } from '../utils/misc'
+import { isPreviewableName } from '../utils/misc'
 import { recognizeInto } from '../utils/pdfText'
 
 const props = defineProps({
@@ -185,9 +185,9 @@ function changeType(ev) {
         <div v-for="f in filesOf(s.id)" :key="f.id" class="file-row">
           <span
             class="file-name"
-            :class="{ previewable: isImageName(f.file.name) }"
-            :title="isImageName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
-            @click="isImageName(f.file.name) && previewFile(f.file)"
+            :class="{ previewable: isPreviewableName(f.file.name) }"
+            :title="isPreviewableName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
+            @click="isPreviewableName(f.file.name) && previewFile(f.file)"
           >{{ f.file.name }}</span>
           <div class="fr-tags">
             <template v-if="showMeta && isTransport">
@@ -248,9 +248,9 @@ function changeType(ev) {
         <div v-for="f in filesOf(cs.id)" :key="f.id" class="file-row">
           <span
             class="file-name"
-            :class="{ previewable: isImageName(f.file.name) }"
-            :title="isImageName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
-            @click="isImageName(f.file.name) && previewFile(f.file)"
+            :class="{ previewable: isPreviewableName(f.file.name) }"
+            :title="isPreviewableName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
+            @click="isPreviewableName(f.file.name) && previewFile(f.file)"
           >{{ f.file.name }}</span>
           <span
             v-if="f.meta && f.meta.header"

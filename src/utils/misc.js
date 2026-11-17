@@ -92,3 +92,8 @@ export function parseMembersCSV(text) {
   }
   return out
 }
+
+/** 可在预览浮层中内嵌展示的文件类型（图片 / PDF / OFD） */
+export function isPreviewableName(n) {
+  return /\.(jpe?g|png|gif|webp|bmp|pdf|ofd)$/i.test(n || '')
+}

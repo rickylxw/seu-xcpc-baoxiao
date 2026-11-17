@@ -127,14 +127,41 @@ export const wizard = state.wizard
 /** 材料打包页的视图模式（team / station）：向导可远程切换，故放 store */
 export const filesUi = reactive({ mode: 'team' })
 
-/** 图片预览浮层：懒创建 objectURL，关闭时立即释放 */
+/** 材料预览浮层：图片 / PDF（浏览器原生查看器）/ OFD（渲染为页图）；关闭时释放 objectURL */
 export function previewFile(file) {
   closePreview()
-  ui.preview = { url: URL.createObjectURL(file), name: file.name }
+  const name = file.name
+  if (/\.pdf$/i.test(name)) {
+    ui.preview = { kind: 'pdf', url: URL.createObjectURL(file), name }
+    return
+  }
+  if (/\.ofd$/i.test(name)) {
+    ui.preview = { kind: 'ofd-loading', pages: [], name }
+    import('./utils/ofd.js')
+      .then(async ({ renderOfd, paintOfdPage }) => {
+        const doc = await renderOfd(file)
+        const cv = document.createElement('canvas')
+        const pages = []
+        for (const p of doc.pages) {
+          await paintOfdPage(cv, p, doc.widthMm, doc.heightMm)
+          pages.push(cv.toDataURL('image/png'))
+        }
+        if (ui.preview && ui.preview.name === name) {
+          ui.preview = { kind: 'ofd', pages, name }
+        }
+      })
+      .catch(() => {
+        if (ui.preview && ui.preview.name === name) {
+          ui.preview = { kind: 'error', message: 'OFD 渲染失败，请确认文件完整', name }
+        }
+      })
+    return
+  }
+  ui.preview = { kind: 'image', url: URL.createObjectURL(file), name }
 }
 export function closePreview() {
   if (!ui.preview) return
-  URL.revokeObjectURL(ui.preview.url)
+  if (ui.preview.url) URL.revokeObjectURL(ui.preview.url)
   ui.preview = null
 }
 

@@ -19,7 +19,7 @@ import {
 } from '../data/packaging'
 import { readZipEntries } from '../utils/unzip'
 import { parseMembersCSV } from '../utils/misc'
-import { downloadBlob, sanitizeName, isImageName } from '../utils/misc'
+import { downloadBlob, sanitizeName, isPreviewableName } from '../utils/misc'
 import { parseTodosSection } from '../data/report'
 import { buildMergedPdf, mergeHeader } from '../utils/mergePrint'
 import { fetchModelList } from '../utils/serverRecog'
@@ -814,9 +814,9 @@ async function packStation() {
                 v-for="f in efFilesOf(s.id)"
                 :key="f.id"
                 class="file-chip"
-                :class="{ previewable: isImageName(f.file.name) }"
-                :title="isImageName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
-                @click="isImageName(f.file.name) && previewFile(f.file)"
+                :class="{ previewable: isPreviewableName(f.file.name) }"
+                :title="isPreviewableName(f.file.name) ? `${f.file.name}（点击预览）` : f.file.name"
+                @click="isPreviewableName(f.file.name) && previewFile(f.file)"
               >
                 {{ f.file.name }}<button type="button" title="移除" @click.stop="removeEf(f)">×</button>
               </span>

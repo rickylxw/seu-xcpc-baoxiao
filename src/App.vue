@@ -57,7 +57,25 @@ onBeforeUnmount(() => removeEventListener('keydown', onViewerKey))
       <span class="iv-name" :title="ui.preview.name">{{ ui.preview.name }}</span>
       <button type="button" class="iv-close" @click.stop="closePreview">✕ 关闭</button>
     </div>
-    <img class="iv-img" :src="ui.preview.url" :alt="ui.preview.name" @click.stop />
+    <div class="iv-scroll" @click.stop="closePreview">
+      <img v-if="ui.preview.kind === 'image'" class="iv-img" :src="ui.preview.url" :alt="ui.preview.name" />
+      <iframe
+        v-else-if="ui.preview.kind === 'pdf'"
+        class="iv-pdf"
+        :src="ui.preview.url"
+        :title="ui.preview.name"
+      ></iframe>
+      <template v-else-if="ui.preview.kind === 'ofd'">
+        <img
+          v-for="(p, i) in ui.preview.pages"
+          :key="i"
+          class="iv-img iv-ofd-page"
+          :src="p"
+          :alt="`${ui.preview.name}（第 ${i + 1} 页）`"
+        />
+      </template>
+      <div v-else-if="ui.preview.kind === 'error'" class="iv-error">{{ ui.preview.message }}</div>
+    </div>
     <div class="iv-tip">点击空白处或按 Esc 关闭</div>
   </div>
 </template>
