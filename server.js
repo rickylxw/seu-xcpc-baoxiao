@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import * as Core from './src/data/core.js'
 import { sanitizeName, parseMembersCSV } from './src/utils/misc.js'
 import { readZipEntries } from './src/utils/unzip.js'
+import { rgb, PDFDocument } from 'pdf-lib'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -284,48 +285,141 @@ function recognizeAsync(session, rec) {
 
 /**
  * 服务器版汇总 PDF：按清单顺序把材料合成一个 PDF。
- * @param invoicesOnly true = 仅发票/凭证类（「发票汇总-扫描打印版」）；false = 全部材料（「材料汇总-全部材料」）
- * 图片（jpg/png）按 A4 排版；PDF 原件无损拷页；OFD 等无法解析的跳过并记录（OFD 原件仍在包内）。
+ * @param invoicesOnly true = 仅发票/凭证类；false = 全部材料
+ * @param withLabels true = 每份材料首页加文件名标注（核对对照版）；false = 纯打印版
+ * 图片（jpg/png）按 A4 排版；PDF 原件无损拷页；OFD 按坐标矢量渲染（嵌入仿宋字体，文字可选中、打印清晰）。
  * pdf-lib 可用时才生成（返回 null 表示环境缺依赖或没有可合成的材料）。
  */
-async function buildSummaryPdfServer(session, { invoicesOnly = false } = {}) {
-  let PDFDocument
+async function buildSummaryPdfServer(session, { invoicesOnly = false, withLabels = false } = {}) {
+  let fontkitLib
   try {
-    PDFDocument = (await import('pdf-lib')).PDFDocument
+    fontkitLib = (await import('@pdf-lib/fontkit')).default
   } catch (e) {
-    console.error('[summary] pdf-lib 导入失败:', String((e && e.message) || e))
+    console.error('[summary] fontkit 导入失败:', String((e && e.message) || e))
     return null
   }
+  let fontBytes = null
+  try {
+    fontBytes = fs.readFileSync(path.join(__dirname, 'assets', 'FangSong.ttf'))
+  } catch {}
   const A4 = { w: 595.28, h: 841.89 }
+  const MM2PT = 72 / 25.4
   const INV_SLOTS = new Set(['f_invoice', 'h_invoice', 'l_invoice', 'fee_invoice', 't_voucher'])
   const title = invoicesOnly
     ? `${session.st.meta?.contest || 'XCPC'} 报销发票汇总（${session.st.teamName}）`
     : `${session.st.meta?.contest || 'XCPC'} 全部材料汇总（${session.st.teamName}）`
   const out = await PDFDocument.create()
   out.setTitle(title)
+  if (fontBytes) out.registerFontkit(fontkitLib)
+  let cjkFont = null
+  if (fontBytes) {
+    try {
+      cjkFont = await out.embedFont(fontBytes, { subset: true })
+    } catch (e) {
+      console.error('[summary] 中文字体嵌入失败，OFD 文字将省略:', String((e && e.message) || e).slice(0, 120))
+    }
+  }
+  const parseRgb = (str) => {
+    const m = String(str || '').match(/(\d+)\D+(\d+)\D+(\d+)/)
+    return m ? rgb(Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255) : rgb(0, 0, 0)
+  }
   let count = 0
   const skipped = []
+  const drawLabel = (page, text, pageH) => {
+    if (!cjkFont) return
+    page.drawText(text.slice(0, 80), {
+      x: 16,
+      y: pageH - 13,
+      size: 8.5,
+      font: cjkFont,
+      color: rgb(0.45, 0.45, 0.45),
+    })
+  }
+  const LABEL_H = 20 // 带标注时每份材料顶部预留的标签高度（pt）
   for (const g of Core.GROUPS) {
     for (const leg of session.pg.legs.filter((l) => l.group === g.id && l.files.length)) {
       for (const f of leg.files) {
         if (invoicesOnly && !INV_SLOTS.has(f.slot)) continue
         const name = f.file?.name || f.name
+        const label = `［${Core.slotNameOf(leg, f.slot)}］${name}`
         try {
+          if (/\.ofd$/i.test(name)) {
+            // OFD：按坐标矢量渲染成 PDF 页（文字嵌入仿宋可选中，框线矢量、印章图原样）
+            const ofd = await Core.renderOfd(new Blob([f.bytes]))
+            for (const [pi, p] of ofd.pages.entries()) {
+              const labelH = withLabels && pi === 0 ? LABEL_H : 0
+              const pageH = ofd.heightMm * MM2PT + labelH
+              const page = out.addPage([ofd.widthMm * MM2PT, pageH])
+              if (withLabels && pi === 0) drawLabel(page, label, pageH)
+              for (const op of p.ops) {
+                if (op.type === 'image') {
+                  const isPng = /\.png$/i.test(op.mime || '')
+                  const img = isPng ? await out.embedPng(op.bytes) : await out.embedJpg(op.bytes)
+                  page.drawImage(img, {
+                    x: op.x * MM2PT,
+                    y: pageH - labelH - (op.y + op.h) * MM2PT,
+                    width: op.w * MM2PT,
+                    height: op.h * MM2PT,
+                  })
+                } else if (op.type === 'path') {
+                  for (const seg of op.cmds) {
+                    const pts = []
+                    for (let i = 0; i + 1 < seg.list.length; i += 2) {
+                      pts.push({
+                        x: (op.bx + seg.list[i]) * MM2PT,
+                        y: pageH - labelH - (op.by + seg.list[i + 1]) * MM2PT,
+                      })
+                    }
+                    for (let i = 0; i + 1 < pts.length; i++) {
+                      page.drawLine({
+                        start: pts[i],
+                        end: pts[i + 1],
+                        thickness: Math.max(0.4, op.lineWidth * MM2PT),
+                        color: parseRgb(op.stroke),
+                      })
+                    }
+                  }
+                } else if (op.type === 'text' && cjkFont) {
+                  const baseY = pageH - labelH - op.y * MM2PT
+                  let cx = op.x * MM2PT
+                  const chars = [...op.text]
+                  for (let ci = 0; ci < chars.length; ci++) {
+                    page.drawText(chars[ci], {
+                      x: cx,
+                      y: baseY,
+                      size: Math.max(1, op.size * MM2PT),
+                      font: cjkFont,
+                      color: parseRgb(op.color),
+                    })
+                    cx +=
+                      (op.deltaX && op.deltaX[ci] != null ? op.deltaX[ci] : op.size) * MM2PT
+                  }
+                }
+              }
+            }
+            count++
+            continue
+          }
           if (/\.pdf$/i.test(name)) {
             const src = await PDFDocument.load(f.bytes, { ignoreEncryption: true })
             const pages = await out.copyPages(src, src.getPageIndices())
+            pages.forEach((p, pi) => {
+              if (withLabels && pi === 0) drawLabel(p, `［${Core.slotNameOf(leg, f.slot)}］${name}`, p.getHeight())
+            })
             pages.forEach((p) => out.addPage(p))
           } else if (/\.(jpe?g|png)$/i.test(name)) {
             const isPng = f.bytes[0] === 0x89 && f.bytes[1] === 0x50
             const img = isPng ? await out.embedPng(f.bytes) : await out.embedJpg(f.bytes)
+            const labelH = withLabels ? LABEL_H : 0
             const page = out.addPage([A4.w, A4.h])
-            const scale = Math.min((A4.w - 40) / img.width, (A4.h - 40) / img.height, 1)
+            const scale = Math.min((A4.w - 40) / img.width, (A4.h - 24 - labelH - 40) / img.height, 1)
             page.drawImage(img, {
               x: (A4.w - img.width * scale) / 2,
-              y: (A4.h - img.height * scale) / 2,
+              y: (A4.h - 24 - labelH - img.height * scale) / 2,
               width: img.width * scale,
               height: img.height * scale,
             })
+            if (withLabels) drawLabel(page, `［${Core.slotNameOf(leg, f.slot)}］${name}`, page.getHeight())
           } else {
             skipped.push(`${name}（类型不支持）`)
             continue

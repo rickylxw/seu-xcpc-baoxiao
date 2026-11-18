@@ -1,9 +1,38 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { state, previewFile } from '../store'
+import { state, previewFile, showToast } from '../store'
 import { TYPE_META, allSlotsOf, slotsOf } from '../data/packaging'
 import { isPreviewableName } from '../utils/misc'
 import { recognizeInto } from '../utils/pdfText'
+import { scanDocument } from '../utils/scanner'
+
+/** 照片扫描增强：边缘检测裁剪 + 黑白/灰度，替换原文件（保留原图可恢复） */
+async function scanReplace(f, mode) {
+  if (f.scanning) return
+  f.scanning = true
+  try {
+    const res = await scanDocument(f.file, { mode })
+    if (!f.originalFile) f.originalFile = f.file
+    const base = f.file.name.replace(/\.(jpe?g|png|gif|webp|bmp)$/i, '')
+    const ext = mode === 'bw' ? '.png' : '.jpg'
+    f.file = new File([res.blob], `${base}${mode === 'bw' ? '-黑白扫描件' : '-增强'}${ext}`, { type: res.mime })
+    f.scanned = true
+    previewFile(f.file)
+    showToast(res.quadFound ? '已完成扫描裁剪与增强' : '未检测到文档边缘，已整图增强')
+  } catch (e) {
+    showToast('扫描失败：' + String((e && e.message) || e))
+  } finally {
+    f.scanning = false
+  }
+}
+function restoreOriginal(f) {
+  if (!f.originalFile) return
+  f.file = f.originalFile
+  f.originalFile = null
+  f.scanned = false
+  previewFile(f.file)
+  showToast('已恢复原图')
+}
 
 const props = defineProps({
   leg: { type: Object, required: true },
@@ -190,6 +219,23 @@ function changeType(ev) {
             @click="isPreviewableName(f.file.name) && previewFile(f.file)"
           >{{ f.file.name }}</span>
           <div class="fr-tags">
+            <template v-if="showMeta && isTransport">
+              <label class="mem-chk sm scope" title="该文件适用于去程">
+                <input type="checkbox" :checked="scopeOn(f, 'outbound')" @change="toggleScope(f, 'outbound', $event)" />去程
+              </label>
+              <label class="mem-chk sm scope" title="该文件适用于返程">
+                <input type="checkbox" :checked="scopeOn(f, 'return')" @change="toggleScope(f, 'return', $event)" />返程
+              </label>
+            </template>
+            <template v-if="/\.(jpe?g|png)$/i.test(f.file.name)">
+              <button type="button" class="btn btn-sm scan-btn" :disabled="f.scanning" title="自动裁剪 + 黑白扫描件效果（会替换原图，可恢复）" @click="scanReplace(f, 'bw')">
+                {{ f.scanning ? '处理中…' : '黑白扫描' }}
+              </button>
+              <button type="button" class="btn btn-sm" :disabled="f.scanning" title="自动裁剪 + 灰度增强（保留红色印章）" @click="scanReplace(f, 'gray')">
+                灰度增强
+              </button>
+              <button v-if="f.originalFile" type="button" class="btn btn-sm" title="恢复为未扫描的原图" @click="restoreOriginal(f)">恢复原图</button>
+            </template>
             <template v-if="showMeta && isTransport">
               <label class="mem-chk sm scope" title="该文件适用于去程">
                 <input type="checkbox" :checked="scopeOn(f, 'outbound')" @change="toggleScope(f, 'outbound', $event)" />去程

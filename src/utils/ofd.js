@@ -201,7 +201,7 @@ export async function renderOfd(file) {
  * 把一页 OFD 指令画到 canvas（浏览器用；自动按 mm 设定画布尺寸，DPI 默认 144）。
  * 返回实际缩放系数（px/mm）。图片 / 字体缺失时跳过对应元素。
  */
-export async function paintOfdPage(canvas, page, widthMm, heightMm, dpi = 144) {
+export async function paintOfdPage(canvas, page, widthMm, heightMm, dpi = 200) {
   const scale = dpi / 25.4
   canvas.width = Math.max(1, Math.round(widthMm * scale))
   canvas.height = Math.max(1, Math.round(heightMm * scale))
