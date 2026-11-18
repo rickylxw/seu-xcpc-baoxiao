@@ -10,6 +10,9 @@ import * as Core from './src/data/core.js'
 import { sanitizeName, parseMembersCSV } from './src/utils/misc.js'
 import { readZipEntries } from './src/utils/unzip.js'
 import { rgb, PDFDocument } from 'pdf-lib'
+import jpegCodec from 'jpeg-js'
+import { PNG } from 'pngjs'
+import { enhanceRgba } from './src/data/scan-core.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -211,6 +214,44 @@ const destCityOfSt = (st) => {
   return last.replace(/(市|地区|自治州|盟|旗)$/, '') || last
 }
 
+/**
+ * 图片扫描增强（扫描全能王式：四角裁剪矫正 + 自适应黑白 / 灰度），与浏览器端同一纯像素核心（scan-core.js）。
+ * 黑白输出转 PNG（二值图存 JPEG 会有振铃伪影）；解码失败或非 PNG/JPEG 时原样跳过。
+ * 返回 { applied, quadFound?, width?, height?, bytes?, mime?, ms?, reason? }
+ */
+function enhanceImageServer(bytes, mode = 'bw') {
+  const isPng = bytes[0] === 0x89 && bytes[1] === 0x50
+  const isJpg = bytes[0] === 0xff && bytes[1] === 0xd8
+  if (!isPng && !isJpg) return { applied: false, reason: '非 PNG/JPEG，跳过' }
+  let rgba
+  try {
+    if (isPng) {
+      const png = PNG.sync.read(Buffer.from(bytes))
+      rgba = { data: png.data, width: png.width, height: png.height }
+    } else {
+      const j = jpegCodec.decode(Buffer.from(bytes), { useTArray: true, formatAsRGBA: true })
+      rgba = { data: j.data, width: j.width, height: j.height }
+    }
+  } catch (e) {
+    return { applied: false, reason: '图片解码失败（' + (e.message || e) + '），按原图处理' }
+  }
+  const t0 = Date.now()
+  const out = enhanceRgba(rgba.data, rgba.width, rgba.height, { mode })
+  const buf = Buffer.from(out.data.buffer, out.data.byteOffset, out.data.length)
+  let outBytes
+  let mime
+  if (mode === 'bw') {
+    const png = new PNG({ width: out.width, height: out.height })
+    png.data = buf
+    outBytes = PNG.sync.write(png)
+    mime = 'image/png'
+  } else {
+    outBytes = jpegCodec.encode({ data: buf, width: out.width, height: out.height }, 90).data
+    mime = 'image/jpeg'
+  }
+  return { applied: true, quadFound: out.quadFound, width: out.width, height: out.height, bytes: new Uint8Array(outBytes), mime, ms: Date.now() - t0 }
+}
+
 /** 图片材料：调用本机 Ollama 识别（金额/归属/抬头/舱位/起讫地/开票方/收款方），异步写入 */
 function recognizeAsync(session, rec) {
   const leg = session.pg.legs[rec.legIndex]
@@ -223,7 +264,7 @@ function recognizeAsync(session, rec) {
   rec.recog = { status: 'pending', via: 'ollama' }
   ;(async () => {
     const b64 = Buffer.from(rec.bytes).toString('base64')
-    const mime = /\.png$/i.test(rec.name) ? 'image/png' : 'image/jpeg'
+    const mime = rec.mime || (/\.png$/i.test(rec.name) ? 'image/png' : 'image/jpeg')
     const prompt =
       '识别这张报销材料图片，只输出一个 JSON 对象：{"金额":数字,"同学":["姓名"],"抬头":"东南大学或空","经济舱":true或false,"开票方":"发票开具单位全名","收款方":"支付记录收款方全名","起始地":"出发城市","到达地":"到达城市"}。无法判断的字段用空值。'
     // 失败自动重试一次（反馈 3：偶发 fetch failed / Ollama 抖动）
@@ -509,7 +550,7 @@ const agentGuide = () => ({
   project: 'XCPC 报销材料整理工具（东南大学）—— AI 可驱动整套报销材料整理流程',
   how_to_drive: [
     '1. POST /api/agent/sessions 创建会话（携带队名与同学名单），得到 token。会话闲置 4 小时过期，每次请求自动续期（status.session.expiresAt 可查剩余时间）',
-    '2. 对每个材料文件：POST /api/agent/sessions/:token/files（请求体为文件原始字节，头 X-Filename 放文件名）。服务器按文件名关键词自动分类（完整映射见 material_rules.keyword_map）；判不出类别不会报错，文件落入「未分类」段，识别照常进行。图片自动 OCR',
+    '2. 对每个材料文件：POST /api/agent/sessions/:token/files（请求体为文件原始字节，头 X-Filename 放文件名）。服务器按文件名关键词自动分类（完整映射见 material_rules.keyword_map）；判不出类别不会报错，文件落入「未分类」段，识别照常进行。图片自动扫描增强（四角裁剪矫正+黑白，像扫描全能王；响应 scan 字段回报结果；X-Scan: gray 灰度 / off 关闭可切换）后自动 OCR',
     '3. GET /api/agent/sessions/:token/status 查看全部状态、检查结果与 next 建议',
     '4. 对识别不到的字段（金额/归属/开票方/收款方等），由你（AI）自行读取文件内容，PATCH /api/agent/sessions/:token/files/:fileId 提交',
     '5. next 全部清零后 POST /api/agent/sessions/:token/zip 下载打包好的队伍 ZIP',
@@ -548,7 +589,7 @@ const agentGuide = () => ({
     { method: 'GET', path: '/api/agent', desc: '本指南' },
     { method: 'POST', path: '/api/agent/sessions', body: { teamName: '队名(必填)', members: [{ name: '姓名', card: '一卡通号' }], contest: '比赛名', leader: '负责人', homeCity: '出发城市(默认南京)' }, resp: { token: 'xxxx' } },
     { method: 'PATCH', path: '/api/agent/sessions/:token', body: { teamName: '…', members: [{ name: '…', card: '…' }], meta: { contest: '…', leader: '…', homeCity: '…', dateContest: 'YYYY-MM-DD', dateReturn: 'YYYY-MM-DD' } }, desc: '更新会话基础信息' },
-    { method: 'POST', path: '/api/agent/sessions/:token/files', headers: { 'X-Filename': '文件名（URL 编码）' }, body: '文件原始字节', resp: { fileId: 'fab12c34', slot: 'f_order', leg: 'transport/flight', scope: ['outbound', 'return'], recog: 'pending' }, desc: '判不出类别时返回 200 + warning，slot=unsorted（未分类），读内容后 PATCH 归位' },
+    { method: 'POST', path: '/api/agent/sessions/:token/files', headers: { 'X-Filename': '文件名（URL 编码）', 'X-Scan': '图片扫描增强模式（默认 bw 黑白；gray 灰度；off 关闭）' }, body: '文件原始字节', resp: { fileId: 'fab12c34', slot: 'f_order', leg: 'transport/flight', scope: ['outbound', 'return'], recog: 'pending', scan: { applied: true, mode: 'bw', quadFound: true, width: 1600, height: 1000 } }, desc: '图片自动扫描增强（四角裁剪矫正+黑白/灰度）后 OCR，scan.quadFound=false 表示未检出证件边缘（整图增强）；判不出类别时返回 200 + warning，slot=unsorted（未分类），读内容后 PATCH 归位' },
     { method: 'PATCH', path: '/api/agent/sessions/:token/files/:fileId', body: { amount: '670.00', members: ['姓名'], scope: ['outbound'], slot: 'f_order 或 ["h_flow","h_pay"]（一文件多槽）', extraSlots: ['h_pay'], group: '移动目标分组（配 type）', type: 'flight/train/local/hotel/entryfee', label: '段备注', issuer: '开票方', payee: '收款方', consistent: true, note: '不一致说明' }, desc: 'slot/extraSlots 非法时返回该段全部合法槽位（含 supplement）；members 用姓名数组（服务器换算下标）；issuer/payee/consistent/note 写入该文件所在段的收付款核对' },
     { method: 'DELETE', path: '/api/agent/sessions/:token/files/:fileId', desc: '删除文件' },
     { method: 'GET', path: '/api/agent/sessions/:token/status', resp: '全量状态 + session（含 expiresAt/expiresInMinutes）+ checks + next（下一步建议）；files[].recogError 为识别失败原因' },
@@ -863,7 +904,24 @@ async function handleAgent(req, res, pathname) {
     }
     const raw = new Uint8Array(await readBody(req, 64))
     const fixed = stripJunkPrefix(raw, filename)
-    const bytes = fixed.bytes
+    let bytes = fixed.bytes
+    // 照片自动扫描增强（X-Scan: off 关闭 / gray 灰度，默认 bw 黑白）；增强后再送 Ollama，识别更稳
+    const scanModeRaw = String(req.headers['x-scan'] || 'bw').toLowerCase()
+    const scanMode = scanModeRaw === 'gray' ? 'gray' : scanModeRaw === 'off' ? 'off' : 'bw'
+    let scanInfo = null
+    let recMime = null
+    if (scanMode !== 'off' && /\.(jpe?g|png)$/i.test(filename)) {
+      const sc = enhanceImageServer(bytes, scanMode)
+      if (sc.applied) {
+        bytes = sc.bytes
+        recMime = sc.mime
+        // 黑白增强输出为 PNG 字节（灰度为 JPEG），扩展名同步修正，避免包内名实不符
+        filename = filename.replace(/\.(jpe?g|png)$/i, scanMode === 'bw' ? '.png' : '.jpg')
+        scanInfo = { applied: true, mode: scanMode, quadFound: sc.quadFound, width: sc.width, height: sc.height, ms: sc.ms }
+      } else {
+        scanInfo = { applied: false, reason: sc.reason }
+      }
+    }
     // 判不出类别不拒绝：落入「未分类」段（不参与核对/打包），AI 读取内容后 PATCH group/type/slot 归位
     const cls = Core.classifyMaterial(filename)
     const unclassified = !cls || !cls.groupId
@@ -882,6 +940,7 @@ async function handleAgent(req, res, pathname) {
       meta: null,
       recog: null,
     }
+    if (recMime) rec.mime = recMime
     leg.files.push(rec)
     session.files.push(rec)
     markSessionsDirty()
@@ -892,11 +951,12 @@ async function handleAgent(req, res, pathname) {
       leg: { group: groupId, type },
       scope: rec.scope,
       recog: rec.recog,
+      ...(scanInfo ? { scan: scanInfo } : {}),
       ...(unclassified
         ? { warning: `文件名未含可识别关键词，已存入「未分类」段。请读取文件内容后 PATCH 本文件 {group, type, slot} 归位。分类关键词：${Core.CLASSIFY_HINTS}` }
         : {}),
       hint:
-        '图片将自动 OCR；文本型 PDF/OFD 请自行读取内容后 PATCH 提交 amount/members' +
+        '图片已自动扫描增强并 OCR（重传可换 X-Scan: gray 灰度 / off 关闭）；文本型 PDF/OFD 请自行读取内容后 PATCH 提交 amount/members' +
         (fixed.stripped ? '；已自动剥离文件头的下载垃圾前缀' : ''),
     })
     return

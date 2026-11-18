@@ -63,10 +63,13 @@ const TOOLS = [
   {
     name: 'upload_file',
     description:
-      '上传一个本地材料文件（发票/支付记录/订单行程单等图片或 PDF/OFD）。服务器按文件名关键词自动分类到行程段与槽位（完整关键词映射见 agent_guide 的 keyword_map），图片自动 OCR。判不出类别不会报错：文件落入「未分类」段，读出内容后用 update_file 的 group/type/slot 归位。',
+      '上传一个本地材料文件（发票/支付记录/订单行程单等图片或 PDF/OFD）。服务器按文件名关键词自动分类到行程段与槽位（完整关键词映射见 agent_guide 的 keyword_map）。图片自动扫描增强（四角裁剪矫正+黑白，像扫描件）后 OCR，响应 scan 字段回报增强结果；scan.quadFound=false 表示未检出证件边缘（整图增强），若增强效果不佳可用 scanMode:"gray" 或 "off" 重传。判不出类别不会报错：文件落入「未分类」段，读出内容后用 update_file 的 group/type/slot 归位。',
     inputSchema: {
       type: 'object',
-      properties: { path: { type: 'string', description: '本地文件绝对路径' } },
+      properties: {
+        path: { type: 'string', description: '本地文件绝对路径' },
+        scanMode: { type: 'string', enum: ['bw', 'gray', 'off'], description: '图片扫描增强模式（默认 bw 黑白）' },
+      },
       required: ['path'],
     },
   },
@@ -197,8 +200,10 @@ async function callTool(name, args = {}) {
       if (!token) return '错误：请先 create_session'
       const file = path.resolve(args.path)
       const bytes = fs.readFileSync(file)
+      const scan = args.scanMode
       const { json } = await api('POST', `/api/agent/sessions/${token}/files`, bytes, {
         'X-Filename': encodeURIComponent(path.basename(file)),
+        ...(scan && scan !== 'bw' ? { 'X-Scan': scan } : {}),
       })
       return JSON.stringify(json, null, 2)
     }
