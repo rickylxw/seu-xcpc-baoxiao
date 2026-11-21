@@ -265,8 +265,10 @@ export function downscaleRgba(data, W, H, outW, outH) {
   return out
 }
 
-/** 自适应二值化（积分图局部均值，黑白扫描件效果）——直接改写 RGBA */
-export function adaptiveBinarize(data, W, H) {
+/** 背景白化（扫描件标准处理）：大窗口积分图均值估计背景（纸张亮度），逐像素除以背景。
+    阴影 / 光照不均被背景估计平滑掉——纸变白、字保留、手持阴影不再吞纸。
+    直接改写 data（RGB 同值）。 */
+function backgroundNormalize(data, W, H) {
   const n = W * H
   const gray = new Float32Array(n)
   for (let i = 0; i < n; i++) gray[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]
@@ -279,8 +281,8 @@ export function adaptiveBinarize(data, W, H) {
       integral[(y + 1) * (W + 1) + x + 1] = integral[y * (W + 1) + x + 1] + rowSum
     }
   }
-  const win = Math.max(8, Math.round(W / 20))
-  const offset = 10
+  // 大窗口（约 1/4 边长）：文字与表格线占比小，窗口均值≈纸张亮度；阴影在这么大的窗口里被平均掉
+  const win = Math.max(16, Math.round(Math.max(W, H) / 4))
   for (let y = 0; y < H; y++) {
     const y1 = Math.max(0, y - win)
     const y2 = Math.min(H - 1, y + win)
@@ -290,10 +292,26 @@ export function adaptiveBinarize(data, W, H) {
       const count = (x2 - x1 + 1) * (y2 - y1 + 1)
       const sum =
         integral[(y2 + 1) * (W + 1) + x2 + 1] - integral[y1 * (W + 1) + x2 + 1] - integral[(y2 + 1) * (W + 1) + x1] + integral[y1 * (W + 1) + x1]
+      const bg = Math.max(30, sum / count)
       const i = (y * W + x) * 4
-      const v = gray[y * W + x] < (sum / count) * (1 - offset / 255) ? 0 : 255
+      const v = Math.max(0, Math.min(255, (gray[y * W + x] / bg) * 255))
       data[i] = data[i + 1] = data[i + 2] = v
     }
+  }
+}
+
+/** 黑白扫描件：先背景白化（消阴影），再全局 Otsu 二值。
+    旧实现（小窗口局部均值二值化）在手持拍照的阴影下会把纸判成黑（局部均值被阴影拉低），输出抽象黑斑。 */
+function adaptiveBinarize(data, W, H) {
+  backgroundNormalize(data, W, H)
+  const n = W * H
+  const gray = new Float32Array(n)
+  for (let i = 0; i < n; i++) gray[i] = data[i * 4]
+  const thr = otsuThreshold(gray)
+  for (let i = 0; i < n; i++) {
+    const v = gray[i] > thr ? 255 : 0
+    const j = i * 4
+    data[j] = data[j + 1] = data[j + 2] = v
   }
 }
 
@@ -422,7 +440,12 @@ export function enhanceRgba(srcData, srcW, srcH, { mode = 'bw', maxSide = 2400, 
       }
     }
   }
-  if (mode === 'bw') adaptiveBinarize(out, outW, outH)
-  else contrastStretch(out)
+  if (mode === 'bw') {
+    adaptiveBinarize(out, outW, outH)
+  } else {
+    // 灰度模式：先背景白化（消阴影 / 光照不均），再对比度拉伸
+    backgroundNormalize(out, outW, outH)
+    contrastStretch(out)
+  }
   return { data: out, width: outW, height: outH, quadFound: !!quad }
 }
