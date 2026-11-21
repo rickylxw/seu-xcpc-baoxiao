@@ -4,7 +4,7 @@ import { state, pkg, FLOW, ui, showToast, stationState } from '../store'
 import { GROUPS, TYPE_META, memberNamesOfIdx, memberCoverage } from '../data/packaging'
 import { deadlineText, reportTodos, reportText, reportMarkdown, msgTemplates } from '../data/report'
 import { fmtDateCN, copyText, downloadBlob, sanitizeName } from '../utils/misc'
-import { buildStationPrintPdf, stationHeaderCheck } from '../utils/stationPrint'
+import { buildStationPrintPdf, stationHeaderCheck, extractFillGuides } from '../utils/stationPrint'
 
 const now = computed(() => new Date().toLocaleString('zh-CN', { hour12: false }))
 const todos = computed(() => reportTodos())
@@ -105,6 +105,45 @@ async function buildPrintDoc() {
   } finally {
     printBuilding.value = false
   }
+}
+
+/* ---------- 财务系统填报指引（两屏逐字段）+ 各队对照单页内直读 ---------- */
+const SCREEN1 = [
+  { f: '业务大类', v: '选「日常报销业务」' },
+  { f: '报销项目号 / 项目负责人', v: '向教练 / 项目老师要（对照单里标「未填写」就是队长也没拿到，先补齐再填）' },
+  { f: '申请人工号 / 姓名', v: '报销负责人本人；款项可指定打到某位同学的银行卡' },
+  { f: '电话 / 电子邮件', v: '负责人联系方式（财务有疑问会打这个电话）' },
+  { f: '附件张数', v: '该队 ZIP 内材料文件数（对照单已算好）' },
+  { f: '摘要', v: '「参加 XX 比赛差旅费报销」' },
+  { f: '支付方式 / 币种', v: '按财务 / 教练要求选择下拉；币种人民币' },
+]
+const SCREEN2 = [
+  { f: '出差地点 / 出差期间', v: '比赛城市；比赛开始日 ~ 返程日（对照单已算好天数）' },
+  { f: '姓名 / 职称', v: '每名同学一行；职称填「学生」' },
+  { f: '车船费 / 市内交通 / 住宿费', v: '照对照单里该同学的合计逐格抄；未按人拆分的共享费用按教练要求处理' },
+  { f: '教工 / 学生补贴', v: '教工补贴学生参赛一般不填（0）；学生伙食 / 交通补贴按财务标准与出差天数' },
+]
+const FILL_NOTES = [
+  '「选择已认证发票」：数电票上传后系统自动带出，无需手工录入金额',
+  '报销等级：飞机仅限经济舱、高铁仅限二等座；住宿超标准部分不能报销',
+  '每队填一张报销单（用该队对照单）；填完 → 预约报销时间 → 上传预约报销单与本工具合成的扫描材料',
+]
+const fillGuides = ref([])
+const fillGuidesLoading = ref(false)
+async function loadFillGuides() {
+  if (!stationState.zips.length) return showToast('请先在「材料打包 · 赛站汇总」导入各队 ZIP')
+  fillGuidesLoading.value = true
+  try {
+    fillGuides.value = await extractFillGuides(stationState.zips)
+    const missing = fillGuides.value.filter((g) => !g.text).length
+    showToast(missing ? `${fillGuides.value.length - missing} 队有对照单，${missing} 队包内没有（旧版打包）` : '全部对照单已提取 ✓')
+  } finally {
+    fillGuidesLoading.value = false
+  }
+}
+async function copyGuide(text) {
+  await copyText(text)
+  showToast('对照单已复制')
 }
 </script>
 
@@ -214,6 +253,54 @@ async function buildPrintDoc() {
         <a href="https://caiwuchujf.seu.edu.cn/WFManager/home2.jsp" target="_blank" rel="noreferrer">财务系统网上填报</a>（统一身份认证登录 →
         报销单管理 → 日常报销业务，照各队 ZIP 内「报销系统填写对照单.txt」逐字段填写）→ 预约报销时间并上传预约报销单 → 抬头总检 → 合成完整材料打印文档。
       </p>
+
+      <div class="ck-section">
+        <div class="ck-title">财务系统怎么填（两屏逐字段）</div>
+        <p class="hint" style="margin: 0 0 6px">【屏幕一 · 报销基本信息】</p>
+        <table class="tbl" style="max-width: 720px">
+          <tbody>
+            <tr v-for="x in SCREEN1" :key="x.f">
+              <th style="width: 200px">{{ x.f }}</th>
+              <td>{{ x.v }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hint" style="margin: 10px 0 6px">【屏幕二 · 差旅费明细（每名同学一行）】</p>
+        <table class="tbl" style="max-width: 720px">
+          <tbody>
+            <tr v-for="x in SCREEN2" :key="x.f">
+              <th style="width: 200px">{{ x.f }}</th>
+              <td>{{ x.v }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <ul style="font-size: 14px; padding-left: 20px; margin: 8px 0 0">
+          <li v-for="(n, i) in FILL_NOTES" :key="i">{{ n }}</li>
+        </ul>
+      </div>
+
+      <div class="ck-section">
+        <div class="ck-title">各队对照单（数值直接照抄）</div>
+        <div class="btn-row" style="align-items: center">
+          <button class="btn btn-primary btn-sm" :disabled="fillGuidesLoading" @click="loadFillGuides">
+            {{ fillGuidesLoading ? '提取中…' : '从各队 ZIP 提取对照单' }}
+          </button>
+          <span v-if="stationState.zips.length" class="hint" style="margin: 0">{{ stationState.zips.length }} 支队伍</span>
+        </div>
+        <div v-for="g in fillGuides" :key="g.team" style="margin-top: 8px">
+          <details>
+            <summary style="cursor: pointer; font-size: 14px">
+              {{ g.team }}
+              <span v-if="!g.text" class="cov-miss">（包内无对照单，建议队长用最新版重新打包）</span>
+              <span v-else class="cov-ok">✓</span>
+            </summary>
+            <div v-if="g.text" class="btn-row" style="margin: 6px 0">
+              <button class="btn btn-sm" @click="copyGuide(g.text)">复制全文</button>
+            </div>
+            <pre v-if="g.text" style="white-space: pre-wrap; font-size: 13px; background: var(--bg2, #f6f8fa); padding: 10px; border-radius: 6px; max-height: 320px; overflow: auto">{{ g.text }}</pre>
+          </details>
+        </div>
+      </div>
 
       <div class="ck-section">
         <div class="ck-title">预约报销时间</div>

@@ -32,8 +32,22 @@ export function parseHeaderSection(text) {
   return null
 }
 
-/** 抬头总检：扫各队 ZIP 的核对报告。返回 [{ team, hasReport, hasSection, checked, issues }] */
-export async function stationHeaderCheck(zips) {
+/** 提取各队 ZIP 内的「报销系统填写对照单.txt」（负责人填报时页内直读，无需解压）。返回 [{ team, text, error }] */
+export async function extractFillGuides(zips) {
+  const out = []
+  for (const z of zips) {
+    try {
+      const entries = await readZipEntries(z.file)
+      const e = entries.find((en) => en.name.includes('报销系统填写对照单'))
+      out.push({ team: z.team, text: e ? new TextDecoder('utf-8').decode(e.data) : null })
+    } catch (err) {
+      out.push({ team: z.team, text: null, error: String(err?.message || err).slice(0, 60) })
+    }
+  }
+  return out
+}
+
+/** 抬头总检：扫各队 ZIP 的核对报告。返回 [{ team, hasReport, hasSection, checked, issues }] */export async function stationHeaderCheck(zips) {
   const out = []
   for (const z of zips) {
     try {
