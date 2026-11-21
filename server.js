@@ -811,9 +811,15 @@ async function handleStation(req, res, parts) {
     const refreshed = []
     const skipped = []
     const failed = []
+    // 同队名可能有多个会话（历史比赛/测试残留）：只取最近活跃（lastSeen 最新）的那个
+    const byTeam = new Map()
     for (const session of sessions.values()) {
       const team = (session.st.teamName || '').trim()
       if (!team) continue
+      const prev = byTeam.get(team)
+      if (!prev || (session.lastSeen || 0) > (prev.lastSeen || 0)) byTeam.set(team, session)
+    }
+    for (const [team, session] of byTeam) {
       const existing = station.zips.find((z) => z.team === team)
       if (!existing) {
         skipped.push(team)
