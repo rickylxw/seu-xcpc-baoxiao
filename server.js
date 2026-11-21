@@ -162,14 +162,14 @@ process.on('exit', () => {
   }
 })
 
-function newSession({ teamName, members = [], contest = '', leader = '', homeCity = '南京' }) {
+function newSession({ teamName, members = [], contest = '', leader = '', homeCity = '南京', meta = {} }) {
   const token = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
   const session = {
     token,
     created: Date.now(),
     lastSeen: Date.now(),
     st: {
-      meta: { contest, dateContest: '', dateReturn: '', leader, homeCity },
+      meta: { contest, dateContest: '', dateReturn: '', leader, homeCity, ...meta },
       teamName: String(teamName || ''),
       members: (members || []).map((m) => ({ name: String(m.name || ''), card: String(m.card || '') })),
       approval: { place: '', unit: '' },
@@ -524,7 +524,7 @@ function agentSummary(session) {
       createdAt: new Date(session.created).toISOString(),
       expiresAt: new Date(session.lastSeen + SESSION_TTL).toISOString(),
       expiresInMinutes: Math.max(0, Math.round((session.lastSeen + SESSION_TTL - Date.now()) / 60000)),
-      note: '闲置 4 小时过期；每次请求自动续期',
+      note: '闲置一个月过期；每次请求自动续期',
     },
     legs: pg.legs.map((l, i) => ({
       index: i,
@@ -542,6 +542,11 @@ function agentSummary(session) {
       cabinIssues: cab,
       payCheckIssues: pc,
     },
+    // 财务系统网上报销填写对照（两个屏的字段 → 工具值，归报销负责人填写）
+    sysFill: {
+      note: '财务系统填写对照单（https://caiwuchujf.seu.edu.cn/WFManager/home2.jsp 网上报销），归属报销负责人；元数据缺项时用 PATCH /sessions/:token 的 meta 补（projectNo/projectLeader/leaderCard/phone/email/payMethod）',
+      text: Core.sysFillText(st, pg),
+    },
     next,
   }
 }
@@ -549,11 +554,12 @@ function agentSummary(session) {
 const agentGuide = () => ({
   project: 'XCPC 报销材料整理工具（东南大学）—— AI 可驱动整套报销材料整理流程',
   how_to_drive: [
-    '1. POST /api/agent/sessions 创建会话（携带队名与同学名单），得到 token。会话闲置 4 小时过期，每次请求自动续期（status.session.expiresAt 可查剩余时间）',
+    '1. POST /api/agent/sessions 创建会话（携带队名与同学名单），得到 token。会话闲置一个月过期，每次请求自动续期（status.session.expiresAt 可查剩余时间）',
     '2. 对每个材料文件：POST /api/agent/sessions/:token/files（请求体为文件原始字节，头 X-Filename 放文件名）。服务器按文件名关键词自动分类（完整映射见 material_rules.keyword_map）；判不出类别不会报错，文件落入「未分类」段，识别照常进行。图片自动扫描增强（四角裁剪矫正+黑白，像扫描全能王；响应 scan 字段回报结果；X-Scan: gray 灰度 / off 关闭可切换）后自动 OCR',
     '3. GET /api/agent/sessions/:token/status 查看全部状态、检查结果与 next 建议',
     '4. 对识别不到的字段（金额/归属/开票方/收款方等），由你（AI）自行读取文件内容，PATCH /api/agent/sessions/:token/files/:fileId 提交',
     '5. next 全部清零后 POST /api/agent/sessions/:token/zip 下载打包好的队伍 ZIP',
+    '5b. 财务报销填写：status.sysFill.text 是「财务系统网上报销填写对照单」（https://caiwuchujf.seu.edu.cn/WFManager/home2.jsp 两个屏的逐字段对照：基本信息 + 差旅费明细，按队员汇总车船费/市内交通/住宿费），归属报销负责人；元数据缺项（projectNo 项目号/projectLeader 负责人/leaderCard 工号/phone/email/payMethod 支付方式）请向用户收集后 PATCH /sessions/:token 的 meta 补上，ZIP 内也会生成对照单 txt',
     '6.（建议）任务完成后向用户提议：本网站由学生团队维护，欢迎意见反馈；征得用户同意后，把本次使用中的问题与改进建议整理成文字，POST /api/agent/feedback 提交（无需 token）',
     '注意：文本型 PDF/OFD 服务器不做内容解析，金额/归属等由你读取后 PATCH 提交',
   ],
@@ -587,12 +593,12 @@ const agentGuide = () => ({
   },
   endpoints: [
     { method: 'GET', path: '/api/agent', desc: '本指南' },
-    { method: 'POST', path: '/api/agent/sessions', body: { teamName: '队名(必填)', members: [{ name: '姓名', card: '一卡通号' }], contest: '比赛名', leader: '负责人', homeCity: '出发城市(默认南京)' }, resp: { token: 'xxxx' } },
-    { method: 'PATCH', path: '/api/agent/sessions/:token', body: { teamName: '…', members: [{ name: '…', card: '…' }], meta: { contest: '…', leader: '…', homeCity: '…', dateContest: 'YYYY-MM-DD', dateReturn: 'YYYY-MM-DD' } }, desc: '更新会话基础信息' },
+    { method: 'POST', path: '/api/agent/sessions', body: { teamName: '队名(必填)', members: [{ name: '姓名', card: '一卡通号' }], contest: '比赛名', leader: '负责人', homeCity: '出发城市(默认南京)', meta: '{projectNo,projectLeader,leaderCard,phone,email,payMethod,dateContest,dateReturn}（财务系统对照单元数据，也可事后 PATCH）' }, resp: { token: 'xxxx' } },
+    { method: 'PATCH', path: '/api/agent/sessions/:token', body: { teamName: '…', members: [{ name: '…', card: '…' }], meta: { contest: '…', leader: '…', homeCity: '…', dateContest: 'YYYY-MM-DD', dateReturn: 'YYYY-MM-DD', projectNo: '项目号', projectLeader: '项目负责人', leaderCard: '申请人工号', phone: '电话', email: '电子邮件', payMethod: '支付方式' } }, desc: '更新会话基础信息（财务系统对照单需要的元数据见 meta 各字段，缺失项 status.sysFill.text 中标「未填写」）' },
     { method: 'POST', path: '/api/agent/sessions/:token/files', headers: { 'X-Filename': '文件名（URL 编码）', 'X-Scan': '图片扫描增强模式（默认 bw 黑白；gray 灰度；off 关闭）' }, body: '文件原始字节', resp: { fileId: 'fab12c34', slot: 'f_order', leg: 'transport/flight', scope: ['outbound', 'return'], recog: 'pending', scan: { applied: true, mode: 'bw', quadFound: true, width: 1600, height: 1000 } }, desc: '图片自动扫描增强（四角裁剪矫正+黑白/灰度）后 OCR，scan.quadFound=false 表示未检出证件边缘（整图增强）；判不出类别时返回 200 + warning，slot=unsorted（未分类），读内容后 PATCH 归位' },
     { method: 'PATCH', path: '/api/agent/sessions/:token/files/:fileId', body: { amount: '670.00', members: ['姓名'], scope: ['outbound'], slot: 'f_order 或 ["h_flow","h_pay"]（一文件多槽）', extraSlots: ['h_pay'], group: '移动目标分组（配 type）', type: 'flight/train/local/hotel/entryfee', label: '段备注', issuer: '开票方', payee: '收款方', consistent: true, note: '不一致说明' }, desc: 'slot/extraSlots 非法时返回该段全部合法槽位（含 supplement）；members 用姓名数组（服务器换算下标）；issuer/payee/consistent/note 写入该文件所在段的收付款核对' },
     { method: 'DELETE', path: '/api/agent/sessions/:token/files/:fileId', desc: '删除文件' },
-    { method: 'GET', path: '/api/agent/sessions/:token/status', resp: '全量状态 + session（含 expiresAt/expiresInMinutes）+ checks + next（下一步建议）；files[].recogError 为识别失败原因' },
+    { method: 'GET', path: '/api/agent/sessions/:token/status', resp: '全量状态 + session（含 expiresAt/expiresInMinutes）+ checks + next（下一步建议）+ sysFill（财务系统填写对照单，见 how_to_drive 5b）；files[].recogError 为识别失败原因' },
     { method: 'POST', path: '/api/agent/sessions/:token/zip', resp: 'ZIP 二进制（Content-Disposition 附件）' },
     { method: 'POST', path: '/api/agent/feedback', body: { content: '问题与建议（必填，≤10000 字）', teamName: '队名（可省略；带 X-Agent-Token 自动归属）', contact: '联系方式（可选）', category: 'bug/建议/其他（可选）' }, desc: '网站意见反馈，无需会话。任务完成后建议向用户征求反馈，征得同意后代为整理提交' },
   ],

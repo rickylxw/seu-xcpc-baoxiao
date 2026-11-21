@@ -47,7 +47,8 @@ const TOOLS = [
   },
   {
     name: 'create_session',
-    description: '创建报销会话（一个队一个会话），返回 token。之后所有工具自动使用该 token。会话闲置 4 小时过期，每次调用自动续期。',
+    description:
+      '创建报销会话（一个队一个会话），返回 token。之后所有工具自动使用该 token。会话闲置一个月过期，每次调用自动续期。meta 里可一并传财务系统对照单元数据（项目号/负责人/工号/电话/邮箱/支付方式），缺了后续也能 set_team_info 补。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -56,6 +57,20 @@ const TOOLS = [
         contest: { type: 'string', description: '比赛名称，如 CCPC 2026 长春站' },
         leader: { type: 'string', description: '报销负责人姓名' },
         homeCity: { type: 'string', description: '出发城市（默认南京）' },
+        meta: {
+          type: 'object',
+          properties: {
+            dateContest: { type: 'string', description: '比赛开始日期 YYYY-MM-DD' },
+            dateReturn: { type: 'string', description: '返程日期 YYYY-MM-DD' },
+            projectNo: { type: 'string', description: '财务系统：报销项目号' },
+            projectLeader: { type: 'string', description: '财务系统：项目负责人' },
+            leaderCard: { type: 'string', description: '财务系统：申请人工号' },
+            phone: { type: 'string', description: '财务系统：电话' },
+            email: { type: 'string', description: '财务系统：电子邮件' },
+            payMethod: { type: 'string', description: '财务系统：支付方式' },
+          },
+          description: '财务系统网上报销填写对照单所需元数据（缺项在 get_status 的 sysFill.text 中标「未填写」）',
+        },
       },
       required: ['teamName'],
     },
@@ -99,7 +114,8 @@ const TOOLS = [
   },
   {
     name: 'get_status',
-    description: '获取会话全量状态：每个文件的识别/核对情况（recogError 为识别失败原因）、缺漏检查结果、下一步建议（next 数组）、会话剩余时间（session.expiresAt）。每完成一步都应调用确认。',
+    description:
+      '获取会话全量状态：每个文件的识别/核对情况（recogError 为识别失败原因）、缺漏检查结果、下一步建议（next 数组）、会话剩余时间（session.expiresAt）。sysFill.text 是「财务系统网上报销填写对照单」（caiwuchujf.seu.edu.cn 两个屏的逐字段填写值 + 按队员汇总的车船费/市内交通/住宿费，归报销负责人；元数据缺项向用户收集后 set_team_info 补）。每完成一步都应调用确认。',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -110,7 +126,7 @@ const TOOLS = [
       properties: {
         teamName: { type: 'string' },
         members: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, card: { type: 'string' } } } },
-        meta: { type: 'object', description: '{contest, leader, homeCity, dateContest, dateReturn}' },
+        meta: { type: 'object', description: '{contest, leader, homeCity, dateContest, dateReturn, projectNo, projectLeader, leaderCard, phone, email, payMethod}（后六项为财务系统对照单）' },
       },
     },
   },
