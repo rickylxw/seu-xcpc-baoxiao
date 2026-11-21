@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import * as Core from './src/data/core.js'
 import { sanitizeName, parseMembersCSV } from './src/utils/misc.js'
 import { readZipEntries } from './src/utils/unzip.js'
+import { renderOfd } from './src/utils/ofd.js'
 import { rgb, PDFDocument } from 'pdf-lib'
 import jpegCodec from 'jpeg-js'
 import { PNG } from 'pngjs'
@@ -386,7 +387,7 @@ async function buildSummaryPdfServer(session, { invoicesOnly = false, withLabels
         try {
           if (/\.ofd$/i.test(name)) {
             // OFD：按坐标矢量渲染成 PDF 页（文字嵌入仿宋可选中，框线矢量、印章图原样）
-            const ofd = await Core.renderOfd(new Blob([f.bytes]))
+            const ofd = await renderOfd(new Blob([f.bytes]))
             for (const [pi, p] of ofd.pages.entries()) {
               const labelH = withLabels && pi === 0 ? LABEL_H : 0
               const pageH = ofd.heightMm * MM2PT + labelH
@@ -394,14 +395,25 @@ async function buildSummaryPdfServer(session, { invoicesOnly = false, withLabels
               if (withLabels && pi === 0) drawLabel(page, label, pageH)
               for (const op of p.ops) {
                 if (op.type === 'image') {
-                  const isPng = /\.png$/i.test(op.mime || '')
-                  const img = isPng ? await out.embedPng(op.bytes) : await out.embedJpg(op.bytes)
-                  page.drawImage(img, {
-                    x: op.x * MM2PT,
-                    y: pageH - labelH - (op.y + op.h) * MM2PT,
-                    width: op.w * MM2PT,
-                    height: op.h * MM2PT,
-                  })
+                  // OFD 里 MultiMedia 的 Format/扩展名常不可靠：按魔数嗅探格式，解不了的图跳过（缺图好过整页失败）
+                  const b = op.bytes
+                  const isPng = b[0] === 0x89 && b[1] === 0x50
+                  const isJpg = b[0] === 0xff && b[1] === 0xd8
+                  if (!isPng && !isJpg) {
+                    skipped.push(`${name} 内嵌非 PNG/JPEG 图（跳过该图）`)
+                    continue
+                  }
+                  try {
+                    const img = isPng ? await out.embedPng(b) : await out.embedJpg(b)
+                    page.drawImage(img, {
+                      x: op.x * MM2PT,
+                      y: pageH - labelH - (op.y + op.h) * MM2PT,
+                      width: op.w * MM2PT,
+                      height: op.h * MM2PT,
+                    })
+                  } catch (e) {
+                    skipped.push(`${name} 内嵌图嵌入失败（跳过该图: ${String(e.message || e).slice(0, 60)}）`)
+                  }
                 } else if (op.type === 'path') {
                   for (const seg of op.cmds) {
                     const pts = []

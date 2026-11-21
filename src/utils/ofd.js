@@ -2,7 +2,7 @@
    覆盖数电发票 / 行程单这类税务 OFD 的常用子集：
    模板层 + 正文层的 TextObject（Boundary/Size/TextCode X,Y,DeltaX）、
    ImageObject（ResourceID → Res 图片）、PathObject（M/L/C 直线表格框线）。 */
-import { readZipEntries } from './unzip'
+import { readZipEntries } from './unzip.js'
 
 export async function extractOfdText(file) {
   const entries = await readZipEntries(file)
