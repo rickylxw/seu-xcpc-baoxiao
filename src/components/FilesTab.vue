@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { state, pkg, showToast, recogStats, previewFile, filesUi } from '../store'
+import { state, pkg, showToast, recogStats, previewFile, filesUi, stationState } from '../store'
 import {
   GROUPS,
   TYPE_META,
@@ -357,13 +357,13 @@ async function packTeam() {
 
 /* ---------- 赛站汇总 ---------- */
 const stationName = ref(state.meta.contest || '')
-const stationZips = reactive([])
+const stationZips = stationState.zips // store 级：ReportTab 的负责人卡也要读
 let zid = 1
 const dragging = ref(false)
 const fileEl = ref(null)
 
 // 参赛费材料（赛站级，负责人统一收取）
-const efFiles = reactive([])
+const efFiles = stationState.efFiles
 const efFileEl = ref(null)
 let efPending = null
 let efFid = 1

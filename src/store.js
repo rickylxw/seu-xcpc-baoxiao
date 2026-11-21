@@ -21,6 +21,25 @@ export const FLOW = [
     t: '收到报销款：立刻转付并群内告知',
     d: '收到报销款后，立刻将费用转给对应队伍和同学，并在参赛队员微信群告知。',
   },
+  {
+    t: '负责人：打印报销单汇总文件',
+    d: '下载赛站总包 / 各队 ZIP，里面的「材料汇总-全部材料扫描打印版.pdf」「发票汇总-扫描打印版.pdf」就是财务要的扫描件；也可在下方「负责人 · 打印与预约」一键合成完整打印文档。',
+  },
+  {
+    t: '负责人：财务系统网上填报',
+    d: '打开财务系统网上报销（caiwuchujf.seu.edu.cn，统一身份认证登录，报销单管理 → 日常报销业务），照各队 ZIP 内「报销系统填写对照单.txt」逐字段填写：基本信息屏 + 差旅费明细屏（每名同学一行）。',
+  },
+  {
+    t: '负责人：预约报销时间并上传预约报销单',
+    d: '填报完成后在财务系统预约报销时间段，并按系统要求上传预约报销单与全部扫描材料；预约到的报销时间记在下方「负责人 · 打印与预约」卡里，方便群内同步。',  },
+  {
+    t: '负责人：核对全部发票抬头为「东南大学」',
+    d: '所有可改抬头的发票抬头必须一字不差为「东南大学」（税号 12100000466006770Q），错误抬头无法报销；用下方「抬头总检」按钮扫一遍各队核对报告，有 ⚠ 的队先找队长换票。',
+  },
+  {
+    t: '负责人：合成完整材料打印文档并打印',
+    d: '点「合成完整材料打印版 PDF」把各队材料 + 参赛费合成一份按队分节的大 PDF，打印后随预约报销单一起提交。',
+  },
 ]
 
 export function defaultState() {
@@ -34,6 +53,7 @@ export function defaultState() {
       phone: '', // 财务系统「联系电话」
       email: '', // 财务系统「电子邮件」
       payMethod: '', // 财务系统「支付方式」
+      appointmentTime: '', // 财务系统预约报销时间（负责人记录，供群内同步）
     },
     teamName: '',
     members: [], // { name, card }
@@ -126,6 +146,11 @@ export const wizard = state.wizard
 
 /** 材料打包页的视图模式（team / station）：向导可远程切换，故放 store */
 export const filesUi = reactive({ mode: 'team' })
+
+/** 赛站汇总（负责人）数据：FilesTab 录入、ReportTab 的「打印与预约」卡消费（如抬头总检 / 合成完整打印文档）。
+    file 保持浏览器 File 对象（ZIP 原件 / 参赛费材料），条目字段见 FilesTab.addStationFiles */
+export const stationState = reactive({ zips: [], efFiles: [] })
+if (typeof window !== 'undefined') window.__stationState = stationState // 调试/测试钩
 
 /** 材料预览浮层：图片 / PDF（浏览器原生查看器）/ OFD（渲染为页图）；关闭时释放 objectURL */
 export function previewFile(file) {

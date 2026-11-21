@@ -1,9 +1,10 @@
 <script setup>
-import { computed } from 'vue'
-import { state, pkg, FLOW, ui, showToast } from '../store'
+import { computed, ref } from 'vue'
+import { state, pkg, FLOW, ui, showToast, stationState } from '../store'
 import { GROUPS, TYPE_META, memberNamesOfIdx, memberCoverage } from '../data/packaging'
 import { deadlineText, reportTodos, reportText, reportMarkdown, msgTemplates } from '../data/report'
-import { fmtDateCN, copyText, downloadBlob } from '../utils/misc'
+import { fmtDateCN, copyText, downloadBlob, sanitizeName } from '../utils/misc'
+import { buildStationPrintPdf, stationHeaderCheck } from '../utils/stationPrint'
 
 const now = computed(() => new Date().toLocaleString('zh-CN', { hour12: false }))
 const todos = computed(() => reportTodos())
@@ -65,6 +66,45 @@ function downloadTxt() {
 async function copyMsg(i) {
   await copyText(msgs.value[i])
   showToast('已复制，可粘贴到微信群')
+}
+
+/* ---------- 负责人 · 打印与预约（财务处最后阶段）---------- */
+// 办理流程勾选（点一下切换 ✓/○；旧数据 flow 数组长度不足时自动补齐）
+function toggleFlow(i) {
+  while (state.flow.length < FLOW.length) state.flow.push(false)
+  state.flow[i] = !state.flow[i]
+}
+
+const headerResults = ref([])
+const headerChecking = ref(false)
+async function runHeaderCheck() {
+  if (!stationState.zips.length) return showToast('请先在「材料打包 · 赛站汇总」导入各队 ZIP')
+  headerChecking.value = true
+  try {
+    headerResults.value = await stationHeaderCheck(stationState.zips)
+    const bad = headerResults.value.filter((r) => r.issues.length || !r.hasReport || !r.hasSection)
+    showToast(bad.length ? `${bad.length} 支队伍需要处理，详见列表` : '全部队伍抬头检查通过 ✓')
+  } finally {
+    headerChecking.value = false
+  }
+}
+
+const printBuilding = ref(false)
+const printSummary = ref(null)
+async function buildPrintDoc() {
+  if (!stationState.zips.length) return showToast('请先在「材料打包 · 赛站汇总」导入各队 ZIP')
+  printBuilding.value = true
+  try {
+    const name = state.meta.contest || state.teamName || '赛站'
+    const r = await buildStationPrintPdf(name, stationState.zips, stationState.efFiles)
+    printSummary.value = { pages: r.pages, teams: r.teams, warnings: r.warnings }
+    downloadBlob(r.blob, `${sanitizeName(name)}-完整材料打印版.pdf`)
+    showToast(`已合成 ${r.pages} 页，正在下载`)
+  } catch (e) {
+    showToast('合成失败：' + String(e?.message || e).slice(0, 60))
+  } finally {
+    printBuilding.value = false
+  }
 }
 </script>
 
@@ -133,10 +173,17 @@ async function copyMsg(i) {
         </table>
       </div>
 
-      <h3>三、办理流程</h3>
+      <h3>三、办理流程（点击勾选）</h3>
       <div style="padding-left: 4px">
-        <div v-for="(f, i) in FLOW" :key="i" style="font-size: 14px">
-          {{ state.flow[i] ? '✓' : '○' }} {{ f.t }}
+        <div
+          v-for="(f, i) in FLOW"
+          :key="i"
+          style="font-size: 14px; cursor: pointer; padding: 2px 0"
+          :title="f.d"
+          @click="toggleFlow(i)"
+        >
+          <span :class="state.flow[i] ? 'cov-ok' : 'cov-miss'">{{ state.flow[i] ? '✓' : '○' }}</span>
+          {{ f.t }}
         </div>
       </div>
 
@@ -158,6 +205,77 @@ async function copyMsg(i) {
       <p class="hint" style="margin-top: 16px">
         提示：发票抬头必须为「东南大学」（税号 12100000466006770Q）；飞机仅限经济舱、高铁仅限二等座；各类报销均有时效性，材料不及时、不完整或错误将不能报销；参赛费材料由赛站汇总负责人统一收取。
       </p>
+    </div>
+
+    <div class="card">
+      <h2>负责人 · 打印与预约（财务处最后阶段）</h2>
+      <p class="hint" style="margin-top: 0">
+        赛站汇总打包完成后的收尾流程：打印汇总扫描件 →
+        <a href="https://caiwuchujf.seu.edu.cn/WFManager/home2.jsp" target="_blank" rel="noreferrer">财务系统网上填报</a>（统一身份认证登录 →
+        报销单管理 → 日常报销业务，照各队 ZIP 内「报销系统填写对照单.txt」逐字段填写）→ 预约报销时间并上传预约报销单 → 抬头总检 → 合成完整材料打印文档。
+      </p>
+
+      <div class="ck-section">
+        <div class="ck-title">预约报销时间</div>
+        <div class="btn-row" style="align-items: center">
+          <input
+            v-model="state.meta.appointmentTime"
+            type="text"
+            placeholder="如：11-28（周五） 14:00 财务处办事大厅"
+            style="flex: 1; min-width: 220px"
+          />
+          <button class="btn btn-sm" @click="copyText(state.meta.appointmentTime).then(() => showToast('已复制'))" :disabled="!state.meta.appointmentTime">
+            复制
+          </button>
+        </div>
+        <p class="hint" style="margin-bottom: 0">填好后复制发参赛队员群同步；此栏随本机自动保存。</p>
+      </div>
+
+      <div class="ck-section">
+        <div class="ck-title">抬头总检（所有发票抬头必须为「东南大学」）</div>
+        <div class="btn-row" style="align-items: center">
+          <button class="btn btn-primary btn-sm" :disabled="headerChecking" @click="runHeaderCheck">
+            {{ headerChecking ? '检查中…' : '扫各队核对报告' }}
+          </button>
+          <span v-if="headerResults.length" class="hint" style="margin: 0">
+            {{ headerResults.filter((r) => r.issues.length || !r.hasReport).length ? '存在待处理项 ↓' : '全部通过 ✓' }}
+          </span>
+        </div>
+        <table v-if="headerResults.length" class="tbl" style="max-width: 640px; margin-top: 8px">
+          <thead>
+            <tr><th>队伍</th><th style="width: 18%">已检查</th><th>结果</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in headerResults" :key="r.team">
+              <td>{{ r.team }}</td>
+              <td>{{ r.checked == null ? '—' : r.checked + ' 张' }}</td>
+              <td>
+                <span v-if="!r.hasReport" class="cov-miss">包内无核对报告（队长旧版打包？建议重打包）</span>
+                <span v-else-if="!r.hasSection" class="cov-miss">报告未含抬头检查段（该队可能未做抬头识别，请人工核对或让队长用最新版重新导入打包）</span>
+                <span v-else-if="r.issues.length" class="cov-miss">{{ r.issues.join('；') }}</span>
+                <span v-else class="cov-ok">均为「东南大学」✓</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ck-section">
+        <div class="ck-title">完整材料打印文档</div>
+        <div class="btn-row" style="align-items: center">
+          <button class="btn btn-primary btn-sm" :disabled="printBuilding" @click="buildPrintDoc">
+            {{ printBuilding ? '合成中…' : '合成完整材料打印版 PDF' }}
+          </button>
+          <span v-if="stationState.zips.length" class="hint" style="margin: 0">{{ stationState.zips.length }} 支队伍 + {{ stationState.efFiles.length }} 个参赛费文件</span>
+        </div>
+        <p class="hint" style="margin: 0">
+          参赛费材料 + 每队（队名分隔页 + 包内「材料汇总」PDF，缺则用「发票汇总」，再缺则从原件现场合成）按顺序合并为一份大 PDF，打印后随预约报销单提交。
+        </p>
+        <div v-if="printSummary" style="font-size: 14px; padding: 8px 2px 0">
+          <div>共 {{ printSummary.pages }} 页 · {{ printSummary.teams.map((t) => `${t.team} ${t.pages}页(${t.source})`).join('，') }}</div>
+          <div v-for="(w, i) in printSummary.warnings" :key="i" style="color: var(--warn, #b45309)">⚠ {{ w }}</div>
+        </div>
+      </div>
     </div>
   </section>
 </template>
