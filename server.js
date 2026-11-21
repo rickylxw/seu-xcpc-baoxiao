@@ -129,7 +129,10 @@ function serializeSessions() {
 async function flushSessions() {
   if (!sessionsDirty || !sessions.size) return
   sessionsDirty = false
-  await fs.promises.writeFile(SESSIONS_FILE, serializeSessions())
+  // 原子写：先写临时文件再 rename，防写盘中途进程重启把存档截断（截断的 JSON 会让下次启动静默丢全部会话）
+  const tmp = SESSIONS_FILE + '.tmp'
+  await fs.promises.writeFile(tmp, serializeSessions())
+  await fs.promises.rename(tmp, SESSIONS_FILE)
 }
 function loadSessions() {
   const bytesOf = (b) => {
@@ -661,7 +664,10 @@ function loadStation() {
   }
 }
 loadStation()
-const flushStation = () => fs.promises.writeFile(STATION_FILE, stationSerial()).catch(() => {})
+const flushStation = () => {
+  const tmp = STATION_FILE + '.tmp'
+  return fs.promises.writeFile(tmp, stationSerial()).then(() => fs.promises.rename(tmp, STATION_FILE)).catch(() => {})
+}
 setInterval(() => {
   flushStation().catch(() => {})
 }, 5000).unref()
