@@ -112,11 +112,15 @@ function markSessionsDirty() {
 function serializeSessions() {
   const out = {}
   for (const [t, s] of sessions) {
+    // pg.legs[].files 与顶层 files 是同一批对象（上传时同一引用 push 两处）；
+    // 字节只在顶层 files 存一份 base64，pg 侧剥离 bytes，载入后按 id 重新挂回同一引用。
+    // （旧版把 pg 整体 JSON.stringify，Uint8Array 变成 {"0":12,...} 数字对象，重启后字节全坏且体积膨胀）
+    const pg = JSON.parse(JSON.stringify(s.pg, (k, v) => (k === 'bytes' ? undefined : v)))
     out[t] = {
       created: s.created,
       lastSeen: s.lastSeen || s.created,
       st: s.st,
-      pg: s.pg,
+      pg,
       files: s.files.map((f) => ({ ...f, bytes: Buffer.from(f.bytes).toString('base64') })),
     }
   }
@@ -128,13 +132,24 @@ async function flushSessions() {
   await fs.promises.writeFile(SESSIONS_FILE, serializeSessions())
 }
 function loadSessions() {
+  const bytesOf = (b) => {
+    // base64（现行格式）；或 {"0":12,...} 数字对象（旧版 pg 内联字节的损坏形态，值仍全在，直接还原）
+    if (typeof b === 'string') return new Uint8Array(Buffer.from(b, 'base64'))
+    if (b && typeof b === 'object') return new Uint8Array(Object.values(b))
+    return new Uint8Array(0)
+  }
   try {
     const raw = fs.readFileSync(SESSIONS_FILE, 'utf8')
     const obj = JSON.parse(raw)
     const now = Date.now()
     for (const [t, s] of Object.entries(obj)) {
       if (now - (s.lastSeen || s.created) > SESSION_TTL) continue
-      s.files = (s.files || []).map((f) => ({ ...f, bytes: new Uint8Array(Buffer.from(f.bytes, 'base64')) }))
+      s.files = (s.files || []).map((f) => ({ ...f, bytes: bytesOf(f.bytes) }))
+      // pg.legs[].files 按 id 挂回顶层同一对象（恢复上传时的引用身份，PATCH/识别结果两侧一致）
+      const byId = new Map(s.files.map((f) => [f.id, f]))
+      for (const leg of (s.pg && s.pg.legs) || []) {
+        leg.files = (leg.files || []).map((f) => byId.get(f.id) || { ...f, bytes: bytesOf(f.bytes) })
+      }
       s.lastSeen = s.lastSeen || s.created || Date.now()
       sessions.set(t, s)
     }
