@@ -73,9 +73,9 @@ export const TYPE_META = {
 export const CLASSIFY_HINTS = [
   '邀请函 → 参赛费·邀请函',
   '报名费/参赛费/注册费/赛站 → 参赛费（文件名含「支付/付款/账单/扣款」→ 支付记录，否则 → 发票）',
-  '酒店/住宿/宾馆/民宿/水单 → 住宿（含「发票/开票」→ 住宿发票；含「流水/水单」→ 住宿流水；其余 → 住宿支付记录）',
+  '酒店/住宿/宾馆/民宿/水单/结账单/结帐单 → 住宿（含「发票/开票」→ 住宿发票；含「流水/水单/结账/结帐」→ 住宿流水；其余 → 住宿支付记录）',
   '火车/高铁/动车/铁路/12306/车票 → 高铁·车票报销凭证',
-  '机票/航空/航班/客票/行程单/登机/值机 → 飞机（含「发票/开票/行程单」→ 机票发票；含「支付/付款/账单/扣款」→ 机票支付记录；其余 → 机票订单）',
+  '机票/航空/航班/客票/行程单/行程提示单/登机/值机 → 飞机（含「发票/开票/行程单」→ 机票发票；含「支付/付款/账单/扣款」→ 机票支付记录；其余 → 机票订单，含东航小程序「行程提示单」）',
   '出租/滴滴/网约车/打车/高德/花小猪/T3出行/地铁/公交/市内 → 市内交通，市内强词优先于火车/飞机（含「行程单」→ 行程单；含「发票/开票」→ 发票；含「支付/付款/账单/扣款」→ 支付记录；其余 → 行程单）',
   '文件名含「去程/返程/回程」自动标注去程/返程',
 ].join('；')
@@ -124,8 +124,9 @@ export function classifyMaterial(name, path = '') {
   if (has('报名费', '参赛费', '注册费', '赛站')) {
     return { groupId: 'entryfee', type: 'entryfee', slotId: pay ? 'fee_pay' : 'fee_invoice', scopeHint: null }
   }
-  if (has('酒店', '住宿', '宾馆', '民宿', '水单')) {
-    const slotId = inv ? 'h_invoice' : has('流水', '水单') ? 'h_flow' : 'h_pay'
+  if (has('酒店', '住宿', '宾馆', '民宿', '水单', '结账单', '结帐单')) {
+    // 「结账单/结帐单」是酒店前台盖章流水：主槽归流水（可 PATCH extraSlots h_pay 兼支付）
+    const slotId = inv ? 'h_invoice' : has('流水', '水单', '结账', '结帐') ? 'h_flow' : 'h_pay'
     return { groupId: 'stay', type: 'hotel', slotId, scopeHint: null }
   }
   // 市内交通强词（含打车 / 地铁）优先于火车与飞机（「滴滴行程单」「地铁行程单」不是机票也不是火车票）
@@ -139,7 +140,8 @@ export function classifyMaterial(name, path = '') {
   if (has('火车', '高铁', '动车', '铁路', '12306', '车票')) {
     return { groupId: 'transport', type: 'train', slotId: 't_voucher', scopeHint }
   }
-  if (has('机票', '航空', '航班', '客票', '行程单', '登机', '值机')) {
+  // 「行程提示单」= 东航小程序订单详情（含舱位等级），归机票订单（不含「行程单」连续子串，需单列）
+  if (has('机票', '航空', '航班', '客票', '行程单', '行程提示单', '登机', '值机')) {
     const slotId = inv ? 'f_invoice' : pay ? 'f_pay' : 'f_order'
     return { groupId: 'transport', type: 'flight', slotId, scopeHint }
   }
@@ -807,6 +809,27 @@ export function sysFillText(st, pg) {
     }
   } else {
     L.push('（暂无按人归属的费用数据；导入发票并填写金额 / 归属后自动生成）')
+  }
+  L.push('')
+  // 差旅费明细推荐填法（2026-11 沈阳站实战：出差人一组上限 6 人，多队行程可合并为一行）
+  if (ma.per.length) {
+    const groups = Math.ceil(ma.per.length / 6) || 1
+    L.push(`【差旅费明细推荐填法（出差人一组上限 6 人，右上角「+」加组；共 ${ma.per.length} 人分 ${groups} 组，同组多队行程可合并为一行）】`)
+    for (let g = 0; g < groups; g++) {
+      const rows = ma.per.slice(g * 6, g * 6 + 6)
+      const sum = rows.reduce((acc, p) => ({ carShip: acc.carShip + p.carShip, local: acc.local + p.local, hotel: acc.hotel + p.hotel }), { carShip: 0, local: 0, hotel: 0 })
+      if (g === 0) {
+        sum.carShip += ma.unassigned.carShip
+        sum.local += ma.unassigned.local
+        sum.hotel += ma.unassigned.hotel
+      }
+      const span = st.meta?.dateContest && st.meta?.dateReturn
+        ? Math.round((new Date(st.meta.dateReturn) - new Date(st.meta.dateContest)) / 86400000) + 1
+        : null
+      L.push(`组${g + 1}（${rows.map((p) => p.name).join('、')}）：省份/出差地点、起 ${st.meta?.dateContest || '____'}、止 ${st.meta?.dateReturn || '____'}、车船费 ¥${sum.carShip.toFixed(2)}、市内交通 ¥${sum.local.toFixed(2)}、住宿费 ¥${sum.hotel.toFixed(2)}、伙食补贴按校规、交通补贴否（已实报）、天数 ${span ?? '____'}`)
+    }
+    L.push('口径：支付立减按实付填（报销额=实付）；高速费等票面外附加不报销（市内交通按发票票面）；参赛注册费填「其他费用」栏；出租车老式纸质票二维码扫不出属正常，手填票面四要素（代码/号码/日期/金额）')
+    L.push('注意：行程行日期/天数复制上一组时容易忘改，提交前逐项核对')
   }
   L.push('')
   L.push('【三、其他费用与补贴（财务系统对应输入框）】')

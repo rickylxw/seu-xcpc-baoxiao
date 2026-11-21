@@ -78,12 +78,12 @@ const TOOLS = [
   {
     name: 'upload_file',
     description:
-      '上传一个本地材料文件（发票/支付记录/订单行程单等图片或 PDF/OFD）。服务器按文件名关键词自动分类到行程段与槽位（完整关键词映射见 agent_guide 的 keyword_map）。图片自动扫描增强（四角裁剪矫正+黑白，像扫描件）后 OCR，响应 scan 字段回报增强结果；scan.quadFound=false 表示未检出证件边缘（整图增强），若增强效果不佳可用 scanMode:"gray" 或 "off" 重传。判不出类别不会报错：文件落入「未分类」段，读出内容后用 update_file 的 group/type/slot 归位。',
+      '上传一个本地材料文件（发票/支付记录/订单行程单等图片或 PDF/OFD）。服务器按文件名关键词自动分类到行程段与槽位（完整关键词映射见 agent_guide 的 keyword_map；「结账单」→住宿流水、「行程提示单」→机票订单）。图片默认保留彩色原图（黑白扫描件会丢红章），仅用户明确要黑白时传 scanMode:"bw"，灰度用 "gray"；响应 scan 字段回报增强结果。判不出类别不会报错：文件落入「未分类」段，读出内容后用 update_file 的 group/type/slot 归位。',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', description: '本地文件绝对路径' },
-        scanMode: { type: 'string', enum: ['bw', 'gray', 'off'], description: '图片扫描增强模式（默认 bw 黑白）' },
+        scanMode: { type: 'string', enum: ['off', 'bw', 'gray'], description: '图片扫描增强模式（默认 off 保留彩色原图）' },
       },
       required: ['path'],
     },
@@ -176,8 +176,14 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'station_refresh',
+    description:
+      '负责人：一键从所有队会话现打 ZIP 并替换赛站队包。任何队会话变更（补材料/PATCH/换图）后调用它，再 station_pack 重打总包——免手工「重打队包→DELETE→重传」链（总包从上传队包打包，不刷新就会交付旧内容）。',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
     name: 'station_pack',
-    description: '打包赛站总包并下载到本地路径（含 00-参赛费、各队文件夹、问题清单、汇总说明）。',
+    description: '打包赛站总包并下载到本地路径（含 00-参赛费、各队文件夹、问题清单、汇总说明）。大总包（50MB+）公网代理易超时，失败时改用局域网地址重试。',
     inputSchema: {
       type: 'object',
       properties: { savePath: { type: 'string', description: '保存到的本地路径（如 ./赛站汇总.zip）' } },
@@ -277,6 +283,10 @@ async function callTool(name, args = {}) {
     }
     case 'station_status': {
       const { json } = await api('GET', '/api/agent/station/status')
+      return JSON.stringify(json, null, 2)
+    }
+    case 'station_refresh': {
+      const { json } = await api('POST', '/api/agent/station/refresh')
       return JSON.stringify(json, null, 2)
     }
     case 'station_pack': {

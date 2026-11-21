@@ -350,6 +350,18 @@ function recognizeAsync(session, rec) {
  * 图片（jpg/png）按 A4 排版；PDF 原件无损拷页；OFD 按坐标矢量渲染（嵌入仿宋字体，文字可选中、打印清晰）。
  * pdf-lib 可用时才生成（返回 null 表示环境缺依赖或没有可合成的材料）。
  */
+/** 生成某队 ZIP 字节（两份汇总 PDF + 材料包）；/sessions/:token/zip 与 /station/refresh 共用 */
+async function generateTeamZip(session) {
+  const extra = []
+  const root = sanitizeName(`${session.st.meta?.contest || 'XCPC'}-${session.st.teamName}-报销材料`)
+  const invoices = await buildSummaryPdfServer(session, { invoicesOnly: true })
+  if (invoices) extra.push({ path: `${root}/发票汇总-扫描打印版.pdf`, data: invoices.bytes })
+  const merged = await buildSummaryPdfServer(session, {})
+  if (merged) extra.push({ path: `${root}/材料汇总-全部材料扫描打印版.pdf`, data: merged.bytes })
+  const zip = await Core.buildTeamZipCore(session.st, session.pg, extra)
+  return Buffer.from(await zip.arrayBuffer())
+}
+
 async function buildSummaryPdfServer(session, { invoicesOnly = false, withLabels = false } = {}) {
   let fontkitLib
   try {
@@ -585,15 +597,15 @@ const agentGuide = () => ({
   project: 'XCPC 报销材料整理工具（东南大学）—— AI 可驱动整套报销材料整理流程',
   how_to_drive: [
     '1. POST /api/agent/sessions 创建会话（携带队名与同学名单），得到 token。会话闲置一个月过期，每次请求自动续期（status.session.expiresAt 可查剩余时间）',
-    '2. 对每个材料文件：POST /api/agent/sessions/:token/files（请求体为文件原始字节，头 X-Filename 放文件名）。服务器按文件名关键词自动分类（完整映射见 material_rules.keyword_map）；判不出类别不会报错，文件落入「未分类」段，识别照常进行。图片自动扫描增强（四角裁剪矫正+黑白，像扫描全能王；响应 scan 字段回报结果；X-Scan: gray 灰度 / off 关闭可切换）后自动 OCR',
+    '2. 对每个材料文件：POST /api/agent/sessions/:token/files（请求体为文件原始字节，头 X-Filename 放文件名）。服务器按文件名关键词自动分类（完整映射见 material_rules.keyword_map；酒店「结账单/结帐单」→ 住宿流水、东航小程序「行程提示单」→ 机票订单）；判不出类别不会报错，文件落入「未分类」段，识别照常进行。图片自动扫描增强（四角裁剪矫正；X-Scan: bw 黑白 / gray 灰度；**默认 off 保留彩色原图——报销场景保持默认即可，黑白会把红章变灰，仅用户明确要黑白扫描件时才传 bw**）后自动 OCR',
     '3. GET /api/agent/sessions/:token/status 查看全部状态、检查结果与 next 建议',
     '4. 对识别不到的字段（金额/归属/开票方/收款方等），由你（AI）自行读取文件内容，PATCH /api/agent/sessions/:token/files/:fileId 提交',
-    '5. next 全部清零后 POST /api/agent/sessions/:token/zip 下载打包好的队伍 ZIP。ZIP 必须 EOCD 校验+解包抽验（status 全绿≠字节配对正确，历史发生过图片字节错位）；赛站总包从「上传的队 ZIP」打包而非从会话现打——任何会话变更（补材料/PATCH）后必须重打队包→DELETE 旧 /station/zips/:id→重传→重打 /station/zip，否则总包仍是旧内容',
+    '5. next 全部清零后 POST /api/agent/sessions/:token/zip 下载打包好的队伍 ZIP。ZIP 必须 EOCD 校验+解包抽验（status 全绿≠字节配对正确，历史发生过图片字节错位）；赛站总包从「上传的队 ZIP」打包而非从会话现打——任何会话变更（补材料/PATCH）后用 POST /api/agent/station/refresh 一键从所有会话现打队包并替换赛站队列，再 POST /station/zip 重打总包（或手工：重打队包→DELETE 旧 /station/zips/:id→重传→重打）',
     '5b. 财务报销填写：status.sysFill.text 是「财务系统网上报销填写对照单」（https://caiwujf.seu.edu.cn/WFManager/home2.jsp 两个屏的逐字段对照：基本信息 + 差旅费明细，按队员汇总车船费/市内交通/住宿费），归属报销负责人；元数据缺项（projectNo 项目号/projectLeader 负责人/leaderCard 工号/phone/email/payMethod 支付方式）请向用户收集后 PATCH /sessions/:token 的 meta 补上，ZIP 内也会生成对照单 txt',
     '5c. 财务金额口径（ICPC 沈阳站与财务核对后定稿）：支付立减按实付报销（报销额=实付，如东航机票支付立减 0.50/张）；高速费等票面外附加不报销（市内交通按发票票面，差额队员自担）；参赛注册费填财务系统「其他费用」栏；出租车老式纸质票二维码扫不出属正常（非增值税发票，手填票面四要素或补开电子票，二选一防重复）；差旅费明细出差人一组上限 6 人（+加组），职称选「其他人员」、伙食/交通补贴选「否」、参赛费填「其他费用」栏。服务器/ZIP 金额保持发票口径，财务填表差额口头说明。**经济舱佐证**：数电票票面无舱位栏、支付截图不含舱位——坐飞机的每人必须补一张含「经济舱」字样的订单详情截图（东航小程序→我的订单→订单详情），本流程的 status/next 不检查此项，靠 AI 主动收集核对',
     '6.（建议）任务完成后向用户提议：本网站由学生团队维护，欢迎意见反馈；征得用户同意后，把本次使用中的问题与改进建议整理成文字，POST /api/agent/feedback 提交（无需 token）',
     '注意1：文本型 PDF/OFD 服务器不做内容解析，金额/归属等由你读取后 PATCH 提交',
-    '注意2：上传图片默认黑白化（红章会变灰）——报销场景一律带 X-Scan: off 保留彩色原图，用户明确要黑白扫描件时才用默认',
+    '注意2：上传图片默认保留彩色原图（黑白会把红章变灰）——需要黑白扫描件时显式传 X-Scan: bw',
     '注意3：读材料文件前先本地体检（PDF 用 pdftoppm 渲染副本、图片验证解码通道）：个别正常文件 GLM 解析会报 1210 文件解析失败，一旦进入会话历史该会话永久报废；上游工具链见仓库根 AGENTS.md',
   ],
   leader_flow: {
@@ -604,7 +616,8 @@ const agentGuide = () => ({
       'POST /api/agent/station/entryfees 上传参赛费材料（X-Slot: invite / fee_invoice / fee_pay）',
       'GET /api/agent/station/status 查看队伍 / 材料 / 名单汇总与下一步建议',
       'POST /api/agent/station/zip 打包赛站总包（含 00-参赛费、问题清单、汇总说明；差旅审批单用网页端生成后单独提交）',
-      '重要：/station/zip 从「已上传的队 ZIP」打包而非从会话现打——任何队会话变更（补材料/PATCH/换彩色图）后必须重新 POST /sessions/:token/zip、DELETE 旧 /station/zips/:id、重传新队包，再 POST /station/zip，否则总包仍是旧内容（沈阳站真实翻车过）；交付前解包抽验总包条目',
+      'POST /api/agent/station/refresh 从已登记的队会话现打 ZIP 替换赛站队包——队会话变更（补材料/PATCH/换图）后的标准动作，之后重新 POST /station/zip 重打总包',
+      '重要：/station/zip 从「已上传的队 ZIP」打包而非从会话现打——任何队会话变更（补材料/PATCH/换彩色图）后用 POST /station/refresh 一键现打全部队包并替换赛站队列，再 POST /station/zip 重打总包（手工方式：重打队包→DELETE 旧 /station/zips/:id→重传）；否则总包仍是旧内容（沈阳站真实翻车过）；交付前解包抽验总包条目；大响应下载走局域网 192.168.3.5:8080 更稳（公网代理对 50MB+ 易超时）',
     ],
   },
   material_rules: {
@@ -629,7 +642,7 @@ const agentGuide = () => ({
     { method: 'GET', path: '/api/agent', desc: '本指南' },
     { method: 'POST', path: '/api/agent/sessions', body: { teamName: '队名(必填)', members: [{ name: '姓名', card: '一卡通号' }], contest: '比赛名', leader: '负责人', homeCity: '出发城市(默认南京)', meta: '{projectNo,projectLeader,leaderCard,phone,email,payMethod,dateContest,dateReturn}（财务系统对照单元数据，也可事后 PATCH）' }, resp: { token: 'xxxx' } },
     { method: 'PATCH', path: '/api/agent/sessions/:token', body: { teamName: '…', members: [{ name: '…', card: '…' }], meta: { contest: '…', leader: '…', homeCity: '…', dateContest: 'YYYY-MM-DD', dateReturn: 'YYYY-MM-DD', projectNo: '项目号', projectLeader: '项目负责人', leaderCard: '申请人工号', phone: '电话', email: '电子邮件', payMethod: '支付方式' } }, desc: '更新会话基础信息（财务系统对照单需要的元数据见 meta 各字段，缺失项 status.sysFill.text 中标「未填写」）' },
-    { method: 'POST', path: '/api/agent/sessions/:token/files', headers: { 'X-Filename': '文件名（URL 编码）', 'X-Scan': '图片扫描增强模式（默认 bw 黑白；gray 灰度；off 关闭）' }, body: '文件原始字节', resp: { fileId: 'fab12c34', slot: 'f_order', leg: 'transport/flight', scope: ['outbound', 'return'], recog: 'pending', scan: { applied: true, mode: 'bw', quadFound: true, width: 1600, height: 1000 } }, desc: '图片自动扫描增强（四角裁剪矫正+黑白/灰度）后 OCR，scan.quadFound=false 表示未检出证件边缘（整图增强）；判不出类别时返回 200 + warning，slot=unsorted（未分类），读内容后 PATCH 归位' },
+    { method: 'POST', path: '/api/agent/sessions/:token/files', headers: { 'X-Filename': '文件名（URL 编码）', 'X-Scan': '图片扫描增强模式（默认 off 保留彩色原图；bw 黑白；gray 灰度）' }, body: '文件原始字节', resp: { fileId: 'fab12c34', slot: 'f_order', leg: 'transport/flight', scope: ['outbound', 'return'], recog: 'pending', scan: { applied: true, mode: 'bw', quadFound: true, width: 1600, height: 1000 } }, desc: '图片自动扫描增强（四角裁剪矫正+黑白/灰度）后 OCR，scan.quadFound=false 表示未检出证件边缘（整图增强）；判不出类别时返回 200 + warning，slot=unsorted（未分类），读内容后 PATCH 归位' },
     { method: 'PATCH', path: '/api/agent/sessions/:token/files/:fileId', body: { amount: '670.00', members: ['姓名'], scope: ['outbound'], slot: 'f_order 或 ["h_flow","h_pay"]（一文件多槽）', extraSlots: ['h_pay'], group: '移动目标分组（配 type）', type: 'flight/train/local/hotel/entryfee', label: '段备注', issuer: '开票方', payee: '收款方', consistent: true, note: '不一致说明' }, desc: 'slot/extraSlots 非法时返回该段全部合法槽位（含 supplement）；members 用姓名数组（服务器换算下标）；issuer/payee/consistent/note 写入该文件所在段的收付款核对' },
     { method: 'DELETE', path: '/api/agent/sessions/:token/files/:fileId', desc: '删除文件' },
     { method: 'GET', path: '/api/agent/sessions/:token/status', resp: '全量状态 + session（含 expiresAt/expiresInMinutes）+ checks + next（下一步建议）+ sysFill（财务系统填写对照单，见 how_to_drive 5b）；files[].recogError 为识别失败原因' },
@@ -791,6 +804,41 @@ async function handleStation(req, res, parts) {
     sendJSON(res, 200, { ok: true })
     return
   }
+  // POST /api/agent/station/refresh —— 从已登记的队会话现打 ZIP，替换赛站队包
+  // （改会话后免手工「重打队包→DELETE→重传」链；队名单沿用上次提取，待办视为已清；
+  //   只刷新已在赛站的队——新队/历史测试会话不会被误打包，新队走 station_upload_zip 显式上传）
+  if (req.method === 'POST' && parts[0] === 'refresh' && parts.length === 1) {
+    const refreshed = []
+    const skipped = []
+    const failed = []
+    for (const session of sessions.values()) {
+      const team = (session.st.teamName || '').trim()
+      if (!team) continue
+      const existing = station.zips.find((z) => z.team === team)
+      if (!existing) {
+        skipped.push(team)
+        continue
+      }
+      try {
+        const buf = await generateTeamZip(session)
+        existing.bytes = new Uint8Array(buf)
+        existing.name = `${team}.zip`
+        refreshed.push(team)
+      } catch (e) {
+        failed.push(`${team}: ${(e && e.message) || e}`)
+      }
+    }
+    flushStation().catch(() => {})
+    sendJSON(res, 200, {
+      refreshed,
+      skipped,
+      failed,
+      note: '队名单沿用上次提取；如队内名单有变请重新 station_upload_zip。待办视为已清。',
+      zips: station.zips.map((z) => ({ id: z.id, team: z.team, name: z.name })),
+      next: '可直接 POST /api/agent/station/zip 重新打包赛站总包',
+    })
+    return
+  }
   // GET /api/agent/station/status
   if (req.method === 'GET' && parts[0] === 'status' && parts.length === 1) {
     const rosterTotal = []
@@ -948,8 +996,8 @@ async function handleAgent(req, res, pathname) {
     const raw = new Uint8Array(await readBody(req, 64))
     const fixed = stripJunkPrefix(raw, filename)
     let bytes = fixed.bytes
-    // 照片自动扫描增强（X-Scan: off 关闭 / gray 灰度，默认 bw 黑白）；增强后再送 Ollama，识别更稳
-    const scanModeRaw = String(req.headers['x-scan'] || 'bw').toLowerCase()
+    // 照片自动扫描增强（默认 off 保留彩色原图——黑白会把红章变灰；bw 黑白 / gray 灰度需显式指定）；增强后再送 Ollama，识别更稳
+    const scanModeRaw = String(req.headers['x-scan'] || 'off').toLowerCase()
     const scanMode = scanModeRaw === 'gray' ? 'gray' : scanModeRaw === 'off' ? 'off' : 'bw'
     let scanInfo = null
     let recMime = null
@@ -1107,19 +1155,7 @@ async function handleAgent(req, res, pathname) {
         sendJSON(res, 400, { error: { message: '请先用 PATCH /sessions/:token 设置 teamName' } })
         return
       }
-      const extra = []
-      const root = sanitizeName(`${session.st.meta?.contest || 'XCPC'}-${session.st.teamName}-报销材料`)
-      const invoices = await buildSummaryPdfServer(session, { invoicesOnly: true })
-      if (invoices) {
-        extra.push({ path: `${root}/发票汇总-扫描打印版.pdf`, data: invoices.bytes })
-      }
-      // 全部材料汇总 PDF（PDF 无损拷页 + 图片排 A4；OFD 原件仍在包内）
-      const merged = await buildSummaryPdfServer(session, {})
-      if (merged) {
-        extra.push({ path: `${root}/材料汇总-全部材料扫描打印版.pdf`, data: merged.bytes })
-      }
-      const zip = await Core.buildTeamZipCore(session.st, session.pg, extra)
-      const buf = Buffer.from(await zip.arrayBuffer())
+      const buf = await generateTeamZip(session)
       send(res, 200, buf, {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="${encodeURIComponent(session.st.teamName)}.zip"`,
