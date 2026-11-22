@@ -1,6 +1,6 @@
 /* 合并打印：按清单顺序把全部材料合并为一个大 PDF（图片排 A4 页、PDF 无损合并页面） */
 import { state, pkg } from '../store'
-import { GROUPS, TYPE_META, allSlotsOf, slotNameOf, scopeLabelOf } from '../data/packaging'
+import { GROUPS, TYPE_META, slotNameOf, scopeLabelOf, printSortedFiles } from '../data/packaging'
 import { renderOfd, paintOfdPage } from './ofd'
 import { PDFDocument } from 'pdf-lib'
 
@@ -75,10 +75,7 @@ export async function buildMergedPdf() {
     const legs = pkg.legs.filter((l) => l.group === g.id && l.files.length)
     if (!legs.length) continue
     for (const [li, leg] of legs.entries()) {
-      const slots = allSlotsOf(leg)
-      const ordered = []
-      for (const s of slots) ordered.push(...leg.files.filter((f) => f.slot === s.id))
-      ordered.push(...leg.files.filter((f) => !slots.some((s) => s.id === f.slot)))
+      const ordered = printSortedFiles(leg) // 段内「发票→支付→水单→订单」序（一文件多槽取最靠前）
       const legTitle =
         `${String(li + 1).padStart(2, '0')} ${TYPE_META[leg.type].label}` +
         (leg.label ? ` · ${leg.label}` : '')

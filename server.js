@@ -410,7 +410,8 @@ async function buildSummaryPdfServer(session, { invoicesOnly = false, withLabels
   const LABEL_H = 20 // 带标注时每份材料顶部预留的标签高度（pt）
   for (const g of Core.GROUPS) {
     for (const leg of session.pg.legs.filter((l) => l.group === g.id && l.files.length)) {
-      for (const f of leg.files) {
+      // 段内按「发票 → 支付 → 水单/流水 → 订单」排序（财务对账：每个行程段材料放一起）
+      for (const f of Core.printSortedFiles(leg)) {
         if (invoicesOnly && !INV_SLOTS.has(f.slot)) continue
         const name = f.file?.name || f.name
         const label = `［${Core.slotNameOf(leg, f.slot)}］${name}`

@@ -17,6 +17,7 @@ export const SCOPE_OPTIONS = Core.SCOPE_OPTIONS
 export const scopeLabelOf = Core.scopeLabelOf
 export const classifyMaterial = Core.classifyMaterial
 export const safeRel = Core.safeRel
+export const printSortedFiles = Core.printSortedFiles
 
 /** 打包分组与材料槽位的定义在 core.js（此处转发，见文件头部说明） */
 

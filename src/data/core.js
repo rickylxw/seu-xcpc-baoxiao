@@ -494,6 +494,21 @@ const extOf = (f) => {
   return m ? m[1] : ''
 }
 
+/** 打印/打包顺序：段内按 TYPE_META 槽位定义序排（发票 → 支付记录 → 水单/流水 → 订单/行程单），
+    补充材料殿后；同槽位保持上传相对序。一文件多槽取最靠前的槽位序。
+    财务对账习惯：每个行程段的报销单、支付记录、水单放在一起，而不是同类文件全攒一块。 */
+export function printSortedFiles(leg) {
+  const order = TYPE_META[leg.type]?.slots || []
+  const idxOf = (slot) => {
+    const i = order.findIndex((s) => s.id === slot)
+    return i === -1 ? order.length : i
+  }
+  return (leg.files || [])
+    .map((f, i) => ({ f, i, k: Math.min(idxOf(f.slot), ...(f.extraSlots || []).map(idxOf)) }))
+    .sort((a, b) => a.k - b.k || a.i - b.i)
+    .map((x) => x.f)
+}
+
 /** 按浏览器版命名规则生成清单条目 [{ path, file, name }] */
 export function zipManifest(st, pg) {
   const out = []
@@ -503,7 +518,7 @@ export function zipManifest(st, pg) {
       const legDir =
         `${String(gi + 1).padStart(2, '0')}-${g.name}/` +
         `${String(li + 1).padStart(2, '0')}-${TYPE_META[leg.type].label}${leg.label ? '-' + sanitizeName(leg.label) : ''}`
-      ;(leg.files || []).forEach((f, fi) => {
+      printSortedFiles(leg).forEach((f, fi) => {
         if (f.slot === 'unsorted') return // 未归位材料不进正式 ZIP（status 的 next 会提醒）
         const scope = g.id === 'transport' ? `-${scopeLabelOf(f.scope)}` : ''
         const { names } = memberNamesOfIdx(st, f.members)
