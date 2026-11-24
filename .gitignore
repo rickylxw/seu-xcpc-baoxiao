@@ -16,3 +16,4 @@ tmp-*.txt
 # 服务器运行时生成的会话/赛站存档（含真实材料字节）
 agent-sessions.json
 agent-station.json
+usage-stats.json

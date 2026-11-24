@@ -179,7 +179,44 @@ process.on('exit', () => {
       fs.writeFileSync(SESSIONS_FILE, serializeSessions())
     } catch {}
   }
+  usageFlush()
 })
+
+/** 极简使用统计：按天 PV（web/agent 分桶）+ 独立访客哈希数。不记路径、不存原始 IP
+    （每日随机盐 + sha256 截断，盐与哈希不落盘，落盘只有数字）。 */
+const USAGE_FILE = path.join(__dirname, 'usage-stats.json')
+const usage = { date: '', salt: '', pv: 0, web: 0, agent: 0, ips: new Set() }
+let usageDays = {}
+try {
+  usageDays = JSON.parse(fs.readFileSync(USAGE_FILE, 'utf8')).days || {}
+} catch {}
+function usageRotate(today) {
+  if (usage.date) usageDays[usage.date] = { pv: usage.pv, web: usage.web, agent: usage.agent, uv: usage.ips.size }
+  usage.date = today
+  usage.salt = crypto.randomBytes(8).toString('hex')
+  usage.pv = usage.web = usage.agent = 0
+  usage.ips = new Set()
+}
+function usageTouch(req) {
+  const today = new Date().toISOString().slice(0, 10)
+  if (usage.date !== today) usageRotate(today)
+  usage.pv++
+  const url = req.url || '/'
+  if (url.startsWith('/api/agent')) usage.agent++
+  else if (!url.startsWith('/v1/')) usage.web++
+  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || ''
+  if (ip) usage.ips.add(crypto.createHash('sha256').update(usage.salt + ip).digest('hex').slice(0, 16))
+}
+function usageFlush() {
+  const days = { ...usageDays }
+  days[usage.date] = { pv: usage.pv, web: usage.web, agent: usage.agent, uv: usage.ips.size }
+  try {
+    fs.writeFileSync(USAGE_FILE + '.tmp', JSON.stringify({ days }))
+    fs.renameSync(USAGE_FILE + '.tmp', USAGE_FILE) // 原子写（非原子 writeFile 曾写截断存档）
+  } catch {}
+}
+setInterval(usageFlush, 60000).unref()
+setTimeout(usageFlush, 3000).unref() // 启动先落一次盘（Windows 下 SIGTERM 不触发监听器，短命进程也留痕）
 
 function newSession({ teamName, members = [], contest = '', leader = '', homeCity = '南京', meta = {} }) {
   const token = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
@@ -1178,6 +1215,7 @@ async function handleAgent(req, res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    usageTouch(req) // 极简使用统计：只记数量与当日 IP 哈希，不记路径内容
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
     const pathname = decodeURIComponent(url.pathname)
 
